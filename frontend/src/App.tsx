@@ -23,7 +23,6 @@ function App() {
 
   useEffect(() => { checkJenkins(); }, []);
 
-  // Función temporal para los botones sin implementar
   const handlePlaceholderClick = (funcion: string) => {
     alert(`La función "${funcion}" está en desarrollo.`);
   };
