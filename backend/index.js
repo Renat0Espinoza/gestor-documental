@@ -141,7 +141,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Servir los archivos estáticos del frontend (React)
+// Servir los archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Cualquier ruta que no sea de la API, devuelve el index.html de React
