@@ -4,19 +4,23 @@ pipeline {
     stages {
         stage('Construir Imagen') {
             steps {
-                // Construye la imagen usando el Dockerfile anterior
-                sh 'docker build -t mi-gestor-app:latest .'
+                // Usamos 'bat' en lugar de 'sh' para Windows
+                bat 'docker build -t mi-gestor-app:latest .'
             }
         }
         stage('Desplegar en el Host') {
             steps {
                 script {
-                    // 1. Detener y borrar el contenedor si ya existe
-                    sh 'docker stop gestor-contenedor || true'
-                    sh 'docker rm gestor-contenedor || true'
+                    // En Windows, el comando '|| true' no funciona igual
+                    // Usamos una lógica de script para limpiar contenedores viejos
+                    try {
+                        bat 'docker stop gestor-contenedor'
+                        bat 'docker rm gestor-contenedor'
+                    } catch (Exception e) {
+                        echo "No había contenedores previos para detener."
+                    }
                     
-                    // 2. Correr el nuevo contenedor en el puerto correspondiente
-                    sh 'docker run -d --name gestor-contenedor -p 3000:3000 mi-gestor-app:latest'
+                    bat 'docker run -d --name gestor-contenedor -p 3000:3000 mi-gestor-app:latest'
                 }
             }
         }
