@@ -6,6 +6,10 @@ import cors from 'cors';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { Client } from '@microsoft/microsoft-graph-client';
 import 'isomorphic-fetch';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors()); 
@@ -40,23 +44,24 @@ async function getGraphClient() {
     return Client.init({ authProvider: (done) => done(null, response.accessToken) });
 }
 
-// --- RUTAS ---
+// ==========================================
+// --- RUTAS DE LA API (Con prefijo /api) ---
+// ==========================================
 
-// 1. LISTAR ARCHIVOS (Nuevo: Necesario para el Frontend)
-app.get('/files', (req, res) => {
+// 1. LISTAR ARCHIVOS
+app.get('/api/files', (req, res) => {
     const dir = './uploads';
     if (!fs.existsSync(dir)) return res.json([]);
     
     fs.readdir(dir, (err, files) => {
         if (err) return res.status(500).json({ error: "No se pudieron leer los archivos" });
-        // Filtramos para no mostrar el archivo .gitkeep
         const filteredFiles = files.filter(file => file !== '.gitkeep');
         res.json(filteredFiles);
     });
 });
 
 // 2. SUBIR ARCHIVO
-app.post('/upload', upload.single('archivo'), (req, res) => {
+app.post('/api/upload', upload.single('archivo'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
         res.json({
@@ -70,7 +75,7 @@ app.post('/upload', upload.single('archivo'), (req, res) => {
 });
 
 // 3. PRUEBA SHAREPOINT
-app.get('/test-sharepoint', async (req, res) => {
+app.get('/api/test-sharepoint', async (req, res) => {
     try {
         const client = await getGraphClient();
         const site = await client.api('/sites/root').get();
@@ -81,11 +86,10 @@ app.get('/test-sharepoint', async (req, res) => {
 });
 
 // 4. BUILD DE JENKINS
-app.post('/jenkins-build', async (req, res) => {
+app.post('/api/jenkins-build', async (req, res) => {
     try {
         const auth = Buffer.from(`${process.env.JENKINS_USER}:${process.env.JENKINS_TOKEN}`).toString('base64');
         
-        // Esta URL dispara el Job que acabas de crear
         const response = await fetch(`${process.env.JENKINS_URL}/job/Proyecto-Gestor/build`, {
             method: 'POST',
             headers: { 'Authorization': `Basic ${auth}` }
@@ -102,19 +106,16 @@ app.post('/jenkins-build', async (req, res) => {
 });
 
 // 5. ESTADO DE JENKINS
-app.get('/jenkins-status', async (req, res) => {
+app.get('/api/jenkins-status', async (req, res) => {
     try {
         const { JENKINS_URL, JENKINS_USER, JENKINS_TOKEN } = process.env;
 
-        // Validamos que existan los datos
         if (!JENKINS_USER || !JENKINS_TOKEN) {
             return res.json({ connected: false, message: "Faltan credenciales en el .env" });
         }
 
-        // Creamos la credencial codificada en Base64
         const auth = Buffer.from(`${JENKINS_USER}:${JENKINS_TOKEN}`).toString('base64');
 
-        // Consultamos la API básica de Jenkins
         const response = await fetch(`${JENKINS_URL}/api/json`, {
             headers: {
                 'Authorization': `Basic ${auth}`
@@ -135,13 +136,11 @@ app.get('/jenkins-status', async (req, res) => {
     }
 });
 
-// 6. DOCKER
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// ==========================================
+// --- SERVIDOR DE REACT (El comodín final) ---
+// ==========================================
 
-// Servir los archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use((req, res) => {
