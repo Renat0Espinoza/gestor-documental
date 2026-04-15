@@ -11,16 +11,15 @@ pipeline {
         stage('Desplegar en el Host') {
             steps {
                 script {
-                    // En Windows, el comando '|| true' no funciona igual
-                    // Usamos una lógica de script para limpiar contenedores viejos
                     try {
-                        bat 'docker stop gestor-contenedor'
-                        bat 'docker rm gestor-contenedor'
-                    } catch (Exception e) {
-                        echo "No había contenedores previos para detener."
-                    }
-                    
-                    bat 'docker run -d --name gestor-contenedor -p 3000:3000 mi-gestor-app:latest'
+                    bat 'docker stop gestor-contenedor'
+                    bat 'docker rm gestor-contenedor'
+                } catch (Exception e) {
+                    echo "Limpiando contenedores antiguos..."
+                }
+            
+                // Asegúrate de que el archivo .env esté en la raíz del proyecto en GitHub o en el Workspace
+                bat 'docker run -d --name gestor-contenedor -p 3000:3000 --env-file .env mi-gestor-app:latest'
                 }
             }
         }
