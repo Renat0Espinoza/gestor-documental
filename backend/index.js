@@ -144,8 +144,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Servir los archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Cualquier ruta que no sea de la API, devuelve el index.html de React
-app.get('*', (req, res) => {
+app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
