@@ -1,0 +1,24 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Construir Imagen') {
+            steps {
+                // Construye la imagen usando el Dockerfile anterior
+                sh 'docker build -t mi-gestor-app:latest .'
+            }
+        }
+        stage('Desplegar en el Host') {
+            steps {
+                script {
+                    // 1. Detener y borrar el contenedor si ya existe
+                    sh 'docker stop gestor-contenedor || true'
+                    sh 'docker rm gestor-contenedor || true'
+                    
+                    // 2. Correr el nuevo contenedor en el puerto 3000
+                    sh 'docker run -d --name gestor-contenedor -p 3000:3000 mi-gestor-app:latest'
+                }
+            }
+        }
+    }
+}
