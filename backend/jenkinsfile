@@ -1,0 +1,24 @@
+pipeline {
+    agent any 
+    // Aquí es donde Jenkins usa el host para correr Docker
+    stages {
+        stage('Build Image') {
+            steps {
+                script {
+                    // Crea una imagen de Docker con tu código
+                    sh 'docker build -t gestor-documental-app .'
+                }
+            }
+        }
+        stage('Deploy to Host') {
+            steps {
+                script {
+                    // Detiene contenedores viejos y levanta el nuevo en el puerto 80
+                    sh 'docker stop gestor-app || true'
+                    sh 'docker rm gestor-app || true'
+                    sh 'docker run -d --name gestor-app -p 80:3000 gestor-documental-app'
+                }
+            }
+        }
+    }
+}
