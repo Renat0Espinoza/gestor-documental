@@ -11,7 +11,7 @@ environment {
         stage('Construir Imagen') {
             steps {
                 // Usamos 'sh' para Linux
-                sh 'docker build -t mi-gestor-app:latest .'
+                sh "docker build -t mi-gestor-app:latest ."
             }
         }
         stage('Desplegar en el Host') {
@@ -29,7 +29,7 @@ environment {
                     sh "echo 'AZURE_TENANT_ID=${AZURE_TENANT_ID}' >> .env"
                     sh "echo 'AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}' >> .env"
                 
-                    sh 'docker run -d --name gestor-contenedor -p 3000:3000 --env-file .env mi-gestor-app:latest'
+                    sh "docker run -d --name gestor-contenedor -p 3000:3000 --env-file .env mi-gestor-app:latest"
                 }
             }
         }
