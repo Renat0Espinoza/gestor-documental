@@ -24,10 +24,11 @@ environment {
                         echo "Limpiando..."
                     }
             
-                    // CAMBIO CLAVE: Usamos comillas dobles (") al principio y al final del comando sh
-                    sh "echo 'AZURE_CLIENT_ID=${AZURE_CLIENT_ID}' > .env"
-                    sh "echo 'AZURE_TENANT_ID=${AZURE_TENANT_ID}' >> .env"
-                    sh "echo 'AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}' >> .env"
+                    // AQUÍ ESTÁ LA MAGIA: Mapeamos los nombres de Jenkins a los nombres de Node.js
+                    sh "echo CLIENT_ID=${AZURE_CLIENT_ID} > .env"
+                    sh "echo TENANT_ID=${AZURE_TENANT_ID} >> .env"
+                    sh "echo CLIENT_SECRET=${AZURE_CLIENT_SECRET} >> .env"
+                    sh "echo PORT=3000 >> .env"
                 
                     sh "docker run -d --name gestor-contenedor -p 3000:3000 --env-file .env mi-gestor-app:latest"
                 }
