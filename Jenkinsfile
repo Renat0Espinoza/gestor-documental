@@ -1,6 +1,13 @@
 pipeline {
     agent any
 
+environment {
+        // Vinculamos los IDs de Jenkins a variables del pipeline
+        AZURE_CLIENT_ID     = credentials('AZURE_CLIENT_ID')
+        AZURE_TENANT_ID     = credentials('AZURE_TENANT_ID')
+        AZURE_CLIENT_SECRET = credentials('AZURE_CLIENT_SECRET')
+    }
+    
     stages {
         stage('Construir Imagen') {
             steps {
