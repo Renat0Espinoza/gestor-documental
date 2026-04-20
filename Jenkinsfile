@@ -18,18 +18,18 @@ environment {
             steps {
                 script {
                     try {
-                    sh 'docker stop gestor-contenedor'
-                    sh 'docker rm gestor-contenedor'
-                } catch (Exception e) {
-                    echo "Limpiando contenedores antiguos..."
-                }
+                        sh "docker stop gestor-contenedor || true"
+                        sh "docker rm gestor-contenedor || true"
+                    } catch (Exception e) {
+                        echo "Limpiando..."
+                    }
             
-                // Generamos el archivo .env al vuelo con las variables inyectadas por Jenkins
-                sh 'echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID}" > .env'
-                sh 'echo "AZURE_TENANT_ID=${AZURE_TENANT_ID}" >> .env'
-                sh 'echo "AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}" >> .env'
+                    // CAMBIO CLAVE: Usamos comillas dobles (") al principio y al final del comando sh
+                    sh "echo 'AZURE_CLIENT_ID=${AZURE_CLIENT_ID}' > .env"
+                    sh "echo 'AZURE_TENANT_ID=${AZURE_TENANT_ID}' >> .env"
+                    sh "echo 'AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}' >> .env"
                 
-                sh 'docker run -d --name gestor-contenedor -p 3000:3000 --env-file .env mi-gestor-app:latest'
+                    sh 'docker run -d --name gestor-contenedor -p 3000:3000 --env-file .env mi-gestor-app:latest'
                 }
             }
         }
