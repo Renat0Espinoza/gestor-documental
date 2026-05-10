@@ -81,25 +81,37 @@ app.post('/api/jenkins-build', async (req, res) => {
     }
 });
 
-// 4. ESTADO DE JENKINS (Se mantiene temporalmente)
-app.get('/api/jenkins-status', async (req, res) => {
+app.get('/api/github-status', async (req, res) => {
     try {
-        const { JENKINS_URL, JENKINS_USER, JENKINS_TOKEN } = process.env;
-        if (!JENKINS_USER || !JENKINS_TOKEN) {
-            return res.json({ connected: false, message: "Faltan credenciales" });
+        const owner = 'TU_USUARIO';
+        const repo = 'TU_REPOSITORIO';
+        const token = process.env.GITHUB_TOKEN; // En tu .env
+
+        const response = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/vnd.github+json'
+                }
+            }
+        );
+
+        const data = await response.json();
+        const ultimoRun = data.workflow_runs?.[0];
+
+        if (!ultimoRun) {
+            return res.json({ connected: false, message: 'Sin ejecuciones aún' });
         }
-        const auth = Buffer.from(`${JENKINS_USER}:${JENKINS_TOKEN}`).toString('base64');
-        const response = await fetch(`${JENKINS_URL}/api/json`, {
-            headers: { 'Authorization': `Basic ${auth}` }
+
+        const exitoso = ultimoRun.conclusion === 'success';
+        res.json({
+            connected: exitoso,
+            message: exitoso ? 'Último deploy exitoso' : `Estado: ${ultimoRun.conclusion}`
         });
 
-        if (response.ok) {
-            res.json({ connected: true, message: "Conexión exitosa", version: response.headers.get('x-jenkins') });
-        } else {
-            res.json({ connected: false, message: `Error ${response.status}` });
-        }
-    } catch (error) {
-        res.status(500).json({ connected: false, message: "No se pudo conectar" });
+    } catch (err) {
+        res.json({ connected: false, message: 'Error al contactar GitHub' });
     }
 });
 

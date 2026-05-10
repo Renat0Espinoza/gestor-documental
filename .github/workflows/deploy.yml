@@ -1,0 +1,46 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Obtener código
+        uses: actions/checkout@v4
+
+      - name: Construir imagen Docker
+        run: docker build -t mi-gestor-app:latest .
+
+      - name: Guardar imagen como archivo
+        run: docker save mi-gestor-app:latest | gzip > imagen.tar.gz
+
+      - name: Copiar imagen al servidor via SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "imagen.tar.gz"
+          target: "/tmp/"
+
+      - name: Desplegar en el servidor
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            docker load < /tmp/imagen.tar.gz
+            docker stop gestor-contenedor || true
+            docker rm gestor-contenedor || true
+            docker run -d \
+              --name gestor-contenedor \
+              -p 3000:3000 \
+              -e PORT=3000 \
+              -e GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+              mi-gestor-app:latest
