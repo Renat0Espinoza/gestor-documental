@@ -1,22 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react'; // Agregamos useRef
 import axios from 'axios';
-import { 
-  Server, CheckCircle, XCircle, RefreshCcw, 
-  UploadCloud, FolderOpen, Search, Settings, LogOut 
+import {
+  Server, CheckCircle, XCircle, RefreshCcw,
+  UploadCloud, FolderOpen, Search, Settings, LogOut
 } from 'lucide-react';
-import Login from './Login'; // Importamos el nuevo componente
+import Login from './Login';
 
 function App() {
-  // Estado para controlar si el usuario ya inició sesión
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  
-  const [status, setStatus] = useState<{connected: boolean, message: string} | null>(null);
+  const [status, setStatus] = useState<{ connected: boolean, message: string } | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 1. Creamos una referencia al input invisible
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const checkJenkins = async () => {
     setLoading(true);
     try {
-      // Como separarás frontend y backend, asegúrate de que esta URL apunte a tu Node.js cuando lo configures
       const res = await axios.get('/api/jenkins-status');
       setStatus(res.data);
     } catch (err) {
@@ -26,9 +26,9 @@ function App() {
     }
   };
 
-  useEffect(() => { 
+  useEffect(() => {
     if (isAuthenticated) {
-      checkJenkins(); 
+      checkJenkins();
     }
   }, [isAuthenticated]);
 
@@ -36,22 +36,55 @@ function App() {
     alert(`La función "${funcion}" está en desarrollo.`);
   };
 
-  // Si no está autenticado, mostramos la pantalla de Login
+  // 2. Función que se dispara cuando el usuario selecciona un archivo
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; // Atrapamos el archivo seleccionado
+
+    if (!file) return; // Si cancela la ventana, no hacemos nada
+
+    // Validación de seguridad en el frontend
+    if (file.type !== 'application/pdf') {
+      alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
+      return;
+    }
+
+    // 3. Preparamos el paquete para enviarlo al backend
+    const formData = new FormData();
+    formData.append('documento', file); // 'documento' es el nombre que Multer buscará en el backend
+
+    try {
+      console.log("Enviando archivo al servidor...");
+
+      // Llamada real al backend en el puerto 3000
+      const response = await axios.post('http://localhost:3000/api/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      alert(`✅ ¡Subida exitosa!\nEl archivo se guardó como: ${response.data.file}`);
+
+    } catch (error) {
+      console.error("Error al subir:", error);
+      alert('❌ Hubo un error al intentar subir el archivo al servidor.');
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   if (!isAuthenticated) {
     return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
-  // Si está autenticado, mostramos el Panel de Administración (Dashboard)
   return (
-    <div style={{ 
-      display: 'flex', flexDirection: 'column', 
-      minHeight: '100vh', fontFamily: 'sans-serif', backgroundColor: '#f4f4f9' 
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      minHeight: '100vh', fontFamily: 'sans-serif', backgroundColor: '#f4f4f9'
     }}>
-      
-      {/* ENCABEZADO SUPERIOR */}
-      <header style={{ 
-        backgroundColor: 'white', padding: '20px 40px', 
-        boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', 
+
+      <header style={{
+        backgroundColor: 'white', padding: '20px 40px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex',
         justifyContent: 'space-between', alignItems: 'center'
       }}>
         <div>
@@ -63,8 +96,7 @@ function App() {
           </div>
         </div>
 
-        {/* Botón de Cerrar Sesión */}
-        <button 
+        <button
           onClick={() => setIsAuthenticated(false)}
           style={{
             display: 'flex', alignItems: 'center', gap: '8px',
@@ -79,18 +111,28 @@ function App() {
         </button>
       </header>
 
-      {/* ÁREA PRINCIPAL (DASHBOARD) */}
       <main style={{ padding: '40px', flex: 1 }}>
         <h2 style={{ color: '#4a5568', marginBottom: '20px', fontSize: '18px', fontWeight: 'normal' }}>
           Acciones Rápidas
         </h2>
-        
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', 
-          gap: '20px' 
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+          gap: '20px'
         }}>
-          <button onClick={() => handlePlaceholderClick('Subir Documento')} style={cardButtonStyle}>
+
+          {/* INPUT INVISIBLE */}
+          <input
+            type="file"
+            accept="application/pdf"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFileUpload}
+          />
+
+          {/* BOTÓN MODIFICADO PARA ABRIR EL INPUT */}
+          <button onClick={() => fileInputRef.current?.click()} style={cardButtonStyle}>
             <UploadCloud size={40} color="#3182ce" style={{ marginBottom: '15px' }} />
             <h3 style={cardTitleStyle}>Subir Documento</h3>
             <p style={cardDescStyle}>Cargar nuevos archivos al sistema</p>
@@ -116,10 +158,9 @@ function App() {
         </div>
       </main>
 
-      {/* INDICADOR DE JENKINS FLOTANTE */}
-      <div 
+      <div
         onClick={loading ? undefined : checkJenkins}
-        style={{ 
+        style={{
           position: 'fixed', bottom: '20px', right: '20px',
           display: 'flex', alignItems: 'center', gap: '12px',
           padding: '12px 20px', borderRadius: '50px', backgroundColor: 'white',
@@ -130,15 +171,15 @@ function App() {
         title="Clic para actualizar estado"
       >
         <Server size={24} color={status?.connected ? '#319795' : '#e53e3e'} />
-        
+
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={{ fontSize: '12px', color: '#718096', fontWeight: 'bold' }}>
             Servidor Jenkins
           </span>
-          <span style={{ 
-            fontSize: '14px', 
+          <span style={{
+            fontSize: '14px',
             color: status?.connected ? '#2c7a7b' : '#c53030',
-            display: 'flex', alignItems: 'center', gap: '5px' 
+            display: 'flex', alignItems: 'center', gap: '5px'
           }}>
             {loading ? 'Consultando...' : status?.connected ? 'Conectado' : 'Desconectado'}
             {status?.connected && !loading ? <CheckCircle size={14} /> : null}
@@ -146,10 +187,10 @@ function App() {
           </span>
         </div>
 
-        <RefreshCcw 
-          size={16} 
-          color="#a0aec0" 
-          style={{ marginLeft: '10px', animation: loading ? 'spin 1s linear infinite' : 'none' }} 
+        <RefreshCcw
+          size={16}
+          color="#a0aec0"
+          style={{ marginLeft: '10px', animation: loading ? 'spin 1s linear infinite' : 'none' }}
         />
       </div>
 
