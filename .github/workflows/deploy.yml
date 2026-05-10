@@ -38,9 +38,13 @@ jobs:
             docker load < /tmp/imagen.tar.gz
             docker stop gestor-contenedor || true
             docker rm gestor-contenedor || true
+            docker image prune -f
             docker run -d \
               --name gestor-contenedor \
-              -p 3000:3000 \
+              --restart unless-stopped \
+              -p 8059:3000 \
+              -v /data/gestor-uploads:/app/backend/uploads \
               -e PORT=3000 \
-              -e GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+              -e GITHUB_TOKEN=${{ secrets.GH_STATUS_TOKEN }} \
               mi-gestor-app:latest
+            rm -f /tmp/imagen.tar.gz

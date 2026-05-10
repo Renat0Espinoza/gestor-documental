@@ -3,7 +3,6 @@ import 'dotenv/config';
 import multer from 'multer';
 import fs from 'fs';
 import cors from 'cors';
-import fetch from 'node-fetch'; // O 'isomorphic-fetch' si lo prefieres
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,34 +13,56 @@ app.use(cors());
 app.use(express.json());
 
 // --- CONFIGURACIÓN DE MULTER (LA BODEGA LOCAL) ---
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const dir = './uploads';
-        // Si la carpeta uploads no existe, Node.js la crea automáticamente
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-        cb(null, dir);
-    },
-    filename: (req, file, cb) => {
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (_req, file, cb) => {
         // Le pegamos la fecha exacta al nombre para que no choquen dos PDFs iguales
         cb(null, Date.now() + '-' + file.originalname);
     }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
+
+// ==========================================
+// --- FUNCIONES AUXILIARES ---
+// ==========================================
+function getFileMetadata(filename) {
+    try {
+        const filePath = path.join(uploadsDir, filename);
+        const stats = fs.statSync(filePath);
+        return {
+            name: filename,
+            size: stats.size,
+            modified: stats.mtime,
+        };
+    } catch {
+        return { name: filename, size: 0, modified: null };
+    }
+}
+
+function listAllFiles() {
+    if (!fs.existsSync(uploadsDir)) return [];
+    const files = fs.readdirSync(uploadsDir);
+    return files
+        .filter(f => f !== '.gitkeep')
+        .map(getFileMetadata);
+}
 
 // ==========================================
 // --- RUTAS DE LA API (Con prefijo /api) ---
 // ==========================================
 
-// 1. LISTAR ARCHIVOS
-app.get('/api/files', (req, res) => {
-    const dir = './uploads';
-    if (!fs.existsSync(dir)) return res.json([]);
-
-    fs.readdir(dir, (err, files) => {
-        if (err) return res.status(500).json({ error: "No se pudieron leer los archivos" });
-        const filteredFiles = files.filter(file => file !== '.gitkeep');
-        res.json(filteredFiles);
-    });
+// 1. LISTAR ARCHIVOS (con metadata)
+app.get('/api/files', (_req, res) => {
+    try {
+        const files = listAllFiles();
+        res.json(files);
+    } catch (err) {
+        console.error('Error al listar archivos:', err);
+        res.status(500).json({ error: 'No se pudieron leer los archivos' });
+    }
 });
 
 // 2. SUBIR ARCHIVO (Conectado con React)
@@ -49,43 +70,63 @@ app.post('/api/upload', upload.single('documento'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
 
-        console.log("✅ ¡Éxito! Archivo guardado en disco:", req.file.filename);
+        console.log('✅ ¡Éxito! Archivo guardado en disco:', req.file.filename);
 
         res.json({
             success: true,
-            message: "Archivo guardado localmente",
+            message: 'Archivo guardado localmente',
             file: req.file.filename
         });
     } catch (error) {
-        console.error("Error al guardar archivo:", error);
+        console.error('Error al guardar archivo:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// 3. BUILD DE JENKINS (Se mantiene temporalmente)
-app.post('/api/jenkins-build', async (req, res) => {
+// 3. BUSCAR ARCHIVOS POR NOMBRE
+app.get('/api/search', (req, res) => {
     try {
-        const auth = Buffer.from(`${process.env.JENKINS_USER}:${process.env.JENKINS_TOKEN}`).toString('base64');
-        const response = await fetch(`${process.env.JENKINS_URL}/job/Proyecto-Gestor/build`, {
-            method: 'POST',
-            headers: { 'Authorization': `Basic ${auth}` }
-        });
+        const query = (req.query.q || '').toString().toLowerCase().trim();
+        if (!query) return res.json([]);
 
-        if (response.status === 201) {
-            res.json({ success: true, message: "¡Despliegue iniciado en Jenkins!" });
-        } else {
-            res.status(500).json({ success: false, message: "No se pudo iniciar el proceso" });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+        const allFiles = listAllFiles();
+        const results = allFiles.filter(f =>
+            f.name.toLowerCase().includes(query)
+        );
+
+        res.json(results);
+    } catch (err) {
+        console.error('Error en búsqueda:', err);
+        res.status(500).json({ error: 'Error al buscar archivos' });
     }
 });
 
-app.get('/api/github-status', async (req, res) => {
+// 4. DESCARGAR ARCHIVO POR NOMBRE
+app.get('/api/files/:filename', (req, res) => {
+    const filePath = path.join(uploadsDir, req.params.filename);
+
+    // Prevenir ataques de path traversal
+    if (!filePath.startsWith(uploadsDir)) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Archivo no encontrado' });
+    }
+
+    res.download(filePath);
+});
+
+// 5. ESTADO DEL DEPLOY (GitHub Actions)
+app.get('/api/github-status', async (_req, res) => {
     try {
-        const owner = 'TU_USUARIO';
-        const repo = 'TU_REPOSITORIO';
-        const token = process.env.GITHUB_TOKEN; // En tu .env
+        const owner = process.env.GITHUB_OWNER || 'Renat0Espinoza';
+        const repo = process.env.GITHUB_REPO || 'gestor-documental';
+        const token = process.env.GITHUB_TOKEN;
+
+        if (!token) {
+            return res.json({ connected: false, message: 'Token de GitHub no configurado' });
+        }
 
         const response = await fetch(
             `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1`,
@@ -107,19 +148,22 @@ app.get('/api/github-status', async (req, res) => {
         const exitoso = ultimoRun.conclusion === 'success';
         res.json({
             connected: exitoso,
-            message: exitoso ? 'Último deploy exitoso' : `Estado: ${ultimoRun.conclusion}`
+            message: exitoso ? 'Último deploy exitoso' : `Estado: ${ultimoRun.conclusion || ultimoRun.status}`,
+            run_url: ultimoRun.html_url,
+            updated_at: ultimoRun.updated_at
         });
 
     } catch (err) {
+        console.error('Error al contactar GitHub:', err.message);
         res.json({ connected: false, message: 'Error al contactar GitHub' });
     }
 });
 
 // ==========================================
-// --- SERVIDOR DE REACT ---
+// --- SERVIDOR DE REACT (Archivos estáticos) ---
 // ==========================================
 app.use(express.static(path.join(__dirname, 'public')));
-app.use((req, res) => {
+app.use((_req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

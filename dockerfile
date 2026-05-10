@@ -8,9 +8,13 @@ RUN npm run build
 
 # ETAPA 2: Configuración del Backend (Node + Express)
 FROM node:18-alpine
+LABEL maintainer="Renat0Espinoza"
+LABEL description="Sistema de Gestión Documental"
+
 WORKDIR /app
+
 COPY backend/package*.json ./backend/
-RUN cd backend && npm install
+RUN cd backend && npm install --omit=dev
 
 # Copiamos el código del backend
 COPY backend/ ./backend/
@@ -19,7 +23,11 @@ COPY backend/ ./backend/
 # Esto lo pone en una carpeta que Express pueda servir
 COPY --from=frontend-builder /app/frontend/dist ./backend/public
 
-# Exponemos el puerto de tu servidor Node
+# Directorio persistente para documentos subidos
+RUN mkdir -p /app/backend/uploads
+VOLUME /app/backend/uploads
+
+# Exponemos el puerto interno del servidor Node
 EXPOSE 3000
 
 WORKDIR /app/backend

@@ -2,44 +2,66 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
   Server, CheckCircle, XCircle, RefreshCcw,
-  UploadCloud, FolderOpen, Search, Settings, LogOut, ArrowLeft, FileText
+  UploadCloud, FolderOpen, Search, Settings, LogOut,
+  ArrowLeft, FileText, Download, Inbox
 } from 'lucide-react';
 import Login from './Login';
 
+interface FileInfo {
+  name: string;
+  size: number;
+  modified: string | null;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleDateString('es-CL', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+}
+
+type Vista = 'dashboard' | 'explorador' | 'busqueda';
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [status, setStatus] = useState<{ connected: boolean, message: string } | null>(null);
+  const [status, setStatus] = useState<{ connected: boolean; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // NUEVO ESTADO: Controla qué pantalla vemos ('dashboard' o 'explorador')
-  const [vistaActual, setVistaActual] = useState<'dashboard' | 'explorador'>('dashboard');
-  // NUEVO ESTADO: Guarda la lista de archivos que nos manda el servidor
-  const [listaArchivos, setListaArchivos] = useState<string[]>([]);
+  const [vistaActual, setVistaActual] = useState<Vista>('dashboard');
+  const [listaArchivos, setListaArchivos] = useState<FileInfo[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<FileInfo[]>([]);
+  const [searching, setSearching] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // DESPUÉS
+  const API_BASE = '';
+
   const checkGithub = async () => {
     setLoading(true);
     try {
-      const res = await axios.get('/api/github-status');
+      const res = await axios.get(`${API_BASE}/api/github-status`);
       setStatus(res.data);
-    } catch (err) {
-      setStatus({ connected: false, message: "Error al contactar GitHub" });
+    } catch {
+      setStatus({ connected: false, message: 'Error al contactar GitHub' });
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (isAuthenticated) { checkGithub(); }
+    if (isAuthenticated) checkGithub();
   }, [isAuthenticated]);
 
-  const handlePlaceholderClick = (funcion: string) => {
-    alert(`La función "${funcion}" está en desarrollo.`);
-  };
-
-  // --- FUNCIÓN PARA SUBIR ARCHIVOS (Ya funciona) ---
+  // --- SUBIDA DE ARCHIVOS ---
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -53,145 +75,226 @@ function App() {
     formData.append('documento', file);
 
     try {
-      const response = await axios.post('/api/upload', formData, {
+      const response = await axios.post(`${API_BASE}/api/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      alert(`✅ ¡Subida exitosa!\nEl archivo se guardó como: ${response.data.file}`);
-    } catch (error) {
-      console.error("Error al subir:", error);
+      alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
+    } catch {
       alert('❌ Hubo un error al intentar subir el archivo al servidor.');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  // --- NUEVA FUNCIÓN: OBTENER ARCHIVOS ---
+  // --- EXPLORADOR ---
   const abrirExplorador = async () => {
     try {
-      // Le pedimos al backend la lista de archivos
-      const response = await axios.get('/api/files');
-      setListaArchivos(response.data); // Guardamos los datos
-      setVistaActual('explorador');    // Cambiamos la pantalla
-    } catch (error) {
-      console.error("Error al obtener archivos:", error);
-      alert("❌ Error al conectar con el servidor para ver los archivos.");
+      const response = await axios.get(`${API_BASE}/api/files`);
+      setListaArchivos(response.data);
+      setVistaActual('explorador');
+    } catch {
+      alert('❌ Error al conectar con el servidor para ver los archivos.');
     }
   };
 
+  // --- BÚSQUEDA ---
+  const abrirBusqueda = () => {
+    setSearchQuery('');
+    setSearchResults([]);
+    setVistaActual('busqueda');
+  };
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await axios.get(`${API_BASE}/api/search`, { params: { q: query } });
+        setSearchResults(res.data);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+  };
+
+  const handleDownload = (filename: string) => {
+    window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
+  };
+
+  // --- COMPONENTE DE LISTA DE ARCHIVOS REUTILIZABLE ---
+  const renderFileList = (files: FileInfo[]) => (
+    <div className="file-list">
+      {files.map((archivo, index) => (
+        <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
+          <div className="file-icon">
+            <FileText size={20} color="#f87171" />
+          </div>
+          <div className="file-info">
+            <div className="file-name">{archivo.name}</div>
+            <div className="file-meta">
+              {formatFileSize(archivo.size)}
+              {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+            </div>
+          </div>
+          <button className="file-download" onClick={() => handleDownload(archivo.name)}>
+            <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+            Descargar
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
+  // --- AUTH GATE ---
   if (!isAuthenticated) {
     return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', fontFamily: 'sans-serif', backgroundColor: '#f4f4f9' }}>
-
-      <header style={{ backgroundColor: 'white', padding: '20px 40px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className="app-layout">
+      {/* HEADER */}
+      <header className="app-header">
         <div>
-          <h1 style={{ margin: 0, color: '#2d3748', fontSize: '24px' }}>Sistema de Gestión de Documentos</h1>
-          <div style={{ color: '#718096', fontSize: '14px', marginTop: '4px' }}>Panel de Administración</div>
+          <h1>Gestión Documental</h1>
+          <div className="header-sub">Panel de Administración</div>
         </div>
-        <button onClick={() => setIsAuthenticated(false)} style={logoutStyle} title="Cerrar Sesión">
-          <LogOut size={18} /> Salir
+        <button onClick={() => setIsAuthenticated(false)} className="btn-logout" title="Cerrar Sesión">
+          <LogOut size={16} /> Salir
         </button>
       </header>
 
-      <main style={{ padding: '40px', flex: 1, maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+      <main className="app-main">
+        {/* HIDDEN FILE INPUT */}
+        <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
 
-        {/* === PANTALLA 1: DASHBOARD PRINCIPAL === */}
+        {/* === DASHBOARD === */}
         {vistaActual === 'dashboard' && (
           <>
-            <h2 style={{ color: '#4a5568', marginBottom: '20px', fontSize: '18px', fontWeight: 'normal' }}>Acciones Rápidas</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '20px' }}>
-
-              <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
-
-              <button onClick={() => fileInputRef.current?.click()} style={cardButtonStyle}>
-                <UploadCloud size={40} color="#3182ce" style={{ marginBottom: '15px' }} />
-                <h3 style={cardTitleStyle}>Subir Documento</h3>
-                <p style={cardDescStyle}>Cargar nuevos archivos al sistema</p>
+            <div className="section-title">Acciones Rápidas</div>
+            <div className="card-grid">
+              <button className="action-card" onClick={() => fileInputRef.current?.click()}>
+                <div className="card-icon blue">
+                  <UploadCloud size={26} color="#4f8cff" />
+                </div>
+                <h3>Subir Documento</h3>
+                <p>Cargar nuevos archivos PDF al sistema</p>
               </button>
 
-              {/* Conectamos el botón al backend */}
-              <button onClick={abrirExplorador} style={cardButtonStyle}>
-                <FolderOpen size={40} color="#38a169" style={{ marginBottom: '15px' }} />
-                <h3 style={cardTitleStyle}>Explorar Archivos</h3>
-                <p style={cardDescStyle}>Ver listado de documentos guardados</p>
+              <button className="action-card" onClick={abrirExplorador}>
+                <div className="card-icon green">
+                  <FolderOpen size={26} color="#34d399" />
+                </div>
+                <h3>Explorar Archivos</h3>
+                <p>Ver listado de documentos guardados</p>
               </button>
 
-              <button onClick={() => handlePlaceholderClick('Búsqueda')} style={cardButtonStyle}>
-                <Search size={40} color="#d69e2e" style={{ marginBottom: '15px' }} />
-                <h3 style={cardTitleStyle}>Buscar</h3>
-                <p style={cardDescStyle}>Encontrar archivos específicos</p>
+              <button className="action-card" onClick={abrirBusqueda}>
+                <div className="card-icon amber">
+                  <Search size={26} color="#fbbf24" />
+                </div>
+                <h3>Buscar</h3>
+                <p>Encontrar archivos por nombre</p>
               </button>
 
-              <button onClick={() => handlePlaceholderClick('Configuración')} style={cardButtonStyle}>
-                <Settings size={40} color="#718096" style={{ marginBottom: '15px' }} />
-                <h3 style={cardTitleStyle}>Configuración</h3>
-                <p style={cardDescStyle}>Ajustes del sistema y conexión</p>
+              <button className="action-card" onClick={() => alert('La función "Configuración" está en desarrollo.')}>
+                <div className="card-icon purple">
+                  <Settings size={26} color="#a78bfa" />
+                </div>
+                <h3>Configuración</h3>
+                <p>Ajustes del sistema y conexión</p>
               </button>
             </div>
           </>
         )}
 
-        {/* === PANTALLA 2: EXPLORADOR DE ARCHIVOS === */}
+        {/* === EXPLORADOR === */}
         {vistaActual === 'explorador' && (
-          <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '24px', gap: '16px' }}>
-              <button
-                onClick={() => setVistaActual('dashboard')}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4a5568', display: 'flex', alignItems: 'center', gap: '8px' }}
-              >
-                <ArrowLeft size={20} /> Volver
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
               </button>
-              <h2 style={{ margin: 0, color: '#2d3748', fontSize: '20px' }}>Archivos Subidos ({listaArchivos.length})</h2>
+              <h2>Archivos Subidos</h2>
+              <span className="badge">{listaArchivos.length}</span>
             </div>
 
             {listaArchivos.length === 0 ? (
-              <p style={{ color: '#718096', textAlign: 'center', padding: '40px 0' }}>No hay documentos en la bodega aún.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {listaArchivos.map((archivo, index) => (
-                  <div key={index} style={{ display: 'flex', alignItems: 'center', padding: '16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc' }}>
-                    <FileText size={24} color="#e53e3e" style={{ marginRight: '16px' }} />
-                    <span style={{ color: '#2d3748', fontSize: '15px', fontWeight: '500' }}>{archivo}</span>
-                  </div>
-                ))}
+              <div className="empty-state">
+                <Inbox size={48} />
+                <p>No hay documentos en la bodega aún.</p>
               </div>
+            ) : (
+              renderFileList(listaArchivos)
             )}
           </div>
         )}
 
+        {/* === BÚSQUEDA === */}
+        {vistaActual === 'busqueda' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Buscar Documentos</h2>
+            </div>
+
+            <div className="search-bar">
+              <Search size={20} />
+              <input
+                type="text"
+                placeholder="Escribe el nombre del archivo..."
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+                autoFocus
+              />
+              {searching && <RefreshCcw size={16} className="spin-icon" style={{ color: 'var(--text-muted)', marginLeft: 8 }} />}
+            </div>
+
+            {!searchQuery.trim() ? (
+              <div className="empty-state">
+                <Search size={48} />
+                <p>Escribe un término para buscar entre tus documentos.</p>
+              </div>
+            ) : searchResults.length === 0 && !searching ? (
+              <div className="empty-state">
+                <Inbox size={48} />
+                <p>No se encontraron archivos con "{searchQuery}".</p>
+              </div>
+            ) : (
+              renderFileList(searchResults)
+            )}
+          </div>
+        )}
       </main>
 
-      {/* Widget de Jenkins (Se mantiene) */}
+      {/* GITHUB ACTIONS WIDGET */}
       <div
         onClick={loading ? undefined : checkGithub}
-        style={{ position: 'fixed', bottom: '20px', right: '20px', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 20px', borderRadius: '50px', backgroundColor: 'white', boxShadow: '0 4px 10px rgba(0,0,0,0.15)', cursor: loading ? 'wait' : 'pointer', border: `1px solid ${status?.connected ? '#81e6d9' : '#feb2b2'}`, transition: 'all 0.2s' }}
+        className={`github-widget ${status?.connected ? 'connected' : 'disconnected'}`}
       >
-        <Server size={24} color={status?.connected ? '#319795' : '#e53e3e'} />
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: '12px', color: '#718096', fontWeight: 'bold' }}>GitHub Actions</span>
-          <span style={{ fontSize: '14px', color: status?.connected ? '#2c7a7b' : '#c53030', display: 'flex', alignItems: 'center', gap: '5px' }}>
+        <Server size={20} color={status?.connected ? '#34d399' : '#f87171'} />
+        <div>
+          <div className="github-label">GitHub Actions</div>
+          <div className={`github-status ${status?.connected ? 'ok' : 'fail'}`}>
             {loading ? 'Consultando...' : status?.connected ? 'Conectado' : 'Desconectado'}
-            {status?.connected && !loading ? <CheckCircle size={14} /> : null}
-            {!status?.connected && !loading ? <XCircle size={14} /> : null}
-          </span>
+            {status?.connected && !loading && <CheckCircle size={13} />}
+            {!status?.connected && !loading && <XCircle size={13} />}
+          </div>
         </div>
-        <RefreshCcw size={16} color="#a0aec0" style={{ marginLeft: '10px', animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+        <RefreshCcw size={14} color="var(--text-muted)" className={loading ? 'spin-icon' : ''} style={{ marginLeft: 8 }} />
       </div>
-
-      <style>{`
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        button:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.1); }
-      `}</style>
     </div>
   );
 }
-
-// Estilos extraídos
-const cardButtonStyle: React.CSSProperties = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '30px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s ease-in-out', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', textAlign: 'center' };
-const cardTitleStyle: React.CSSProperties = { margin: '0 0 8px 0', color: '#2d3748', fontSize: '18px' };
-const cardDescStyle: React.CSSProperties = { margin: 0, color: '#718096', fontSize: '14px' };
-const logoutStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'transparent', border: '1px solid #e2e8f0', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', color: '#e53e3e', fontWeight: 'bold', transition: 'all 0.2s' };
 
 export default App;
