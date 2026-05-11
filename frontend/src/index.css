@@ -155,6 +155,17 @@ html, body, #root {
   font-size: 14px;
   animation: fadeIn 0.3s ease;
 }
+.login-success {
+  background: rgba(52,211,153,0.1);
+  border: 1px solid rgba(52,211,153,0.2);
+  color: var(--accent-green);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 20px;
+  text-align: center;
+  font-size: 14px;
+  animation: fadeIn 0.3s ease;
+}
 .login-form { display: flex; flex-direction: column; gap: 20px; }
 .input-group label {
   display: block;
