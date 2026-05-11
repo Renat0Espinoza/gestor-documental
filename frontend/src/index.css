@@ -480,6 +480,31 @@ html, body, #root {
   box-shadow: none;
 }
 
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.file-delete {
+  background: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.15);
+  color: var(--accent-red);
+  padding: 6px 10px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.file-delete:hover {
+  background: rgba(248,113,113,0.2);
+  border-color: rgba(248,113,113,0.35);
+  transform: none;
+  box-shadow: none;
+}
+
 .empty-state {
   text-align: center;
   padding: 60px 20px;
