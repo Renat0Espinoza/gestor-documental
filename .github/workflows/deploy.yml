@@ -43,7 +43,7 @@ jobs:
               --name gestor-contenedor \
               --restart unless-stopped \
               -p 8059:3000 \
-              -v /data/gestor-uploads:/app/backend/uploads \
+              -v /home/renatoespinoza2201/gestor-uploads:/app/backend/uploads \
               -e PORT=3000 \
               -e GITHUB_TOKEN=${{ secrets.GH_STATUS_TOKEN }} \
               mi-gestor-app:latest
