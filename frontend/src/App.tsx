@@ -3,9 +3,11 @@ import axios from 'axios';
 import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
-  ArrowLeft, FileText, Download, Inbox, Trash2
+  ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock
 } from 'lucide-react';
 import Login from './Login';
+import { auth } from './firebase';
+import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 interface FileInfo {
   name: string;
@@ -28,7 +30,7 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-type Vista = 'dashboard' | 'explorador' | 'busqueda';
+type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -39,6 +41,15 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<FileInfo[]>([]);
   const [searching, setSearching] = useState(false);
+
+  // --- Estado de perfil ---
+  const [displayName, setDisplayName] = useState('');
+  const [newDisplayName, setNewDisplayName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [settingsSuccess, setSettingsSuccess] = useState('');
+  const [settingsError, setSettingsError] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,6 +71,16 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) checkGithub();
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setDisplayName(user.displayName || '');
+        setIsAuthenticated(true);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // --- SUBIDA DE ARCHIVOS ---
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -142,6 +163,66 @@ function App() {
     window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
   };
 
+  // --- CONFIGURACIÓN ---
+  const abrirConfiguracion = () => {
+    setNewDisplayName(displayName);
+    setNewEmail(auth.currentUser?.email || '');
+    setNewPassword('');
+    setCurrentPassword('');
+    setSettingsSuccess('');
+    setSettingsError('');
+    setVistaActual('configuracion');
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSettingsSuccess('');
+    setSettingsError('');
+    if (!auth.currentUser) return;
+
+    try {
+      const needsReauth = (newEmail !== auth.currentUser.email) || newPassword.length > 0;
+      if (needsReauth) {
+        if (!currentPassword) {
+          setSettingsError('Debes ingresar tu contraseña actual para cambiar el correo o la contraseña.');
+          return;
+        }
+        const credential = EmailAuthProvider.credential(auth.currentUser.email!, currentPassword);
+        await reauthenticateWithCredential(auth.currentUser, credential);
+      }
+
+      if (newDisplayName.trim() !== displayName) {
+        await updateProfile(auth.currentUser, { displayName: newDisplayName.trim() });
+        setDisplayName(newDisplayName.trim());
+      }
+
+      if (newEmail !== auth.currentUser.email) {
+        await updateEmail(auth.currentUser, newEmail);
+      }
+
+      if (newPassword.length > 0) {
+        await updatePassword(auth.currentUser, newPassword);
+      }
+
+      setSettingsSuccess('✅ Perfil actualizado correctamente.');
+      setCurrentPassword('');
+      setNewPassword('');
+    } catch (err: any) {
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setSettingsError('La contraseña actual es incorrecta.');
+      } else if (err.code === 'auth/email-already-in-use') {
+        setSettingsError('Este correo electrónico ya está en uso.');
+      } else if (err.code === 'auth/weak-password') {
+        setSettingsError('La nueva contraseña debe tener al menos 6 caracteres.');
+      } else if (err.code === 'auth/requires-recent-login') {
+        setSettingsError('Por seguridad, cierra sesión y vuelve a iniciar antes de hacer este cambio.');
+      } else {
+        setSettingsError('Ocurrió un error al actualizar el perfil.');
+        console.error(err);
+      }
+    }
+  };
+
   // --- ELIMINAR ARCHIVO (doble confirmación) ---
   const handleDelete = async (filename: string) => {
     const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
@@ -153,7 +234,6 @@ function App() {
     try {
       await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
       alert('🗑️ Archivo eliminado correctamente.');
-      // Refrescar la lista de archivos
       const response = await axios.get(`${API_BASE}/api/files`);
       setListaArchivos(response.data);
     } catch {
@@ -215,6 +295,12 @@ function App() {
         {/* === DASHBOARD === */}
         {vistaActual === 'dashboard' && (
           <>
+            {displayName && (
+              <div className="welcome-banner">
+                <span className="welcome-wave">👋</span>
+                <span>Bienvenid@ <strong>{displayName}</strong></span>
+              </div>
+            )}
             <div className="section-title">Acciones Rápidas</div>
             <div className="card-grid">
               <button className="action-card" onClick={() => fileInputRef.current?.click()}>
@@ -241,7 +327,7 @@ function App() {
                 <p>Encontrar archivos por nombre</p>
               </button>
 
-              <button className="action-card" onClick={() => alert('La función "Configuración" está en desarrollo.')}>
+              <button className="action-card" onClick={abrirConfiguracion}>
                 <div className="card-icon purple">
                   <Settings size={26} color="#a78bfa" />
                 </div>
@@ -309,6 +395,88 @@ function App() {
             ) : (
               renderFileList(searchResults)
             )}
+          </div>
+        )}
+
+        {/* === CONFIGURACIÓN === */}
+        {vistaActual === 'configuracion' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Configuración</h2>
+            </div>
+
+            <div className="settings-section">
+              <h3 className="settings-section-title">Perfil de Usuario</h3>
+
+              {settingsSuccess && <div className="login-success">{settingsSuccess}</div>}
+              {settingsError && <div className="login-error">{settingsError}</div>}
+
+              <form onSubmit={handleUpdateProfile} className="settings-form">
+                <div className="input-group">
+                  <label>Nombre de Usuario</label>
+                  <div className="input-wrapper">
+                    <User size={18} />
+                    <input
+                      type="text"
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      placeholder="Tu nombre"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="input-group">
+                  <label>Correo Electrónico</label>
+                  <div className="input-wrapper">
+                    <Mail size={18} />
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="ejemplo@ubiobio.cl"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="input-group">
+                  <label>Nueva Contraseña <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(dejar vacío para no cambiar)</span></label>
+                  <div className="input-wrapper">
+                    <Lock size={18} />
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                </div>
+
+                {(newEmail !== (auth.currentUser?.email || '') || newPassword.length > 0) && (
+                  <div className="input-group">
+                    <label>Contraseña Actual <span style={{ color: 'var(--accent-amber)', fontWeight: 400 }}>(requerida para confirmar cambios)</span></label>
+                    <div className="input-wrapper">
+                      <Lock size={18} />
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Ingresa tu contraseña actual"
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <button type="submit" className="btn-save">
+                  <Save size={16} /> Guardar Cambios
+                </button>
+              </form>
+            </div>
           </div>
         )}
       </main>

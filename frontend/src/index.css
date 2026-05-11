@@ -524,6 +524,71 @@ html, body, #root {
 .empty-state svg { margin-bottom: 16px; opacity: 0.4; }
 .empty-state p { font-size: 14px; margin: 0; }
 
+/* ===== WELCOME BANNER ===== */
+.welcome-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 24px;
+  margin-bottom: 28px;
+  background: linear-gradient(135deg, rgba(79,140,255,0.1) 0%, rgba(167,139,250,0.1) 50%, rgba(244,114,182,0.08) 100%);
+  border: 1px solid rgba(79,140,255,0.15);
+  border-radius: var(--radius-lg);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--text-primary);
+  animation: fadeIn 0.5s ease;
+}
+.welcome-banner strong {
+  font-weight: 700;
+  background: var(--gradient-main);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.welcome-wave {
+  font-size: 24px;
+  animation: float 2s ease-in-out infinite;
+}
+
+/* ===== SETTINGS ===== */
+.settings-section { margin-top: 8px; }
+.settings-section-title {
+  margin: 0 0 20px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 480px;
+}
+.btn-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--gradient-main);
+  background-size: 200% auto;
+  color: white;
+  padding: 12px 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  width: fit-content;
+}
+.btn-save:hover {
+  background-position: right center;
+  box-shadow: 0 4px 20px var(--accent-blue-glow);
+  transform: translateY(-1px);
+}
+
 /* ===== GITHUB WIDGET ===== */
 .github-widget {
   position: fixed;

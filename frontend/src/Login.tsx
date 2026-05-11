@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Lock, Mail, ArrowLeft } from 'lucide-react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { Lock, Mail, ArrowLeft, User } from 'lucide-react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
 import { auth } from './firebase';
 
 interface LoginProps {
@@ -12,6 +12,7 @@ type Vista = 'login' | 'register' | 'forgot';
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [nombre, setNombre] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [vista, setVista] = useState<Vista>('login');
@@ -23,7 +24,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
     try {
       if (vista === 'register') {
-        await createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(userCredential.user, { displayName: nombre.trim() });
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
@@ -134,6 +136,22 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         {error && <div className="login-error">{error}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
+          {vista === 'register' && (
+            <div className="input-group">
+              <label>Nombre de Usuario</label>
+              <div className="input-wrapper">
+                <User size={18} />
+                <input
+                  type="text"
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="Tu nombre"
+                  required
+                />
+              </div>
+            </div>
+          )}
+
           <div className="input-group">
             <label>Correo Electrónico</label>
             <div className="input-wrapper">
