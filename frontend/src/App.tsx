@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
-  ArrowLeft, FileText, Download, Inbox
+  ArrowLeft, FileText, Download, Inbox, Trash2
 } from 'lucide-react';
 import Login from './Login';
 
@@ -142,6 +142,25 @@ function App() {
     window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
   };
 
+  // --- ELIMINAR ARCHIVO (doble confirmación) ---
+  const handleDelete = async (filename: string) => {
+    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
+    if (!primera) return;
+
+    const segunda = confirm('⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?');
+    if (!segunda) return;
+
+    try {
+      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
+      alert('🗑️ Archivo eliminado correctamente.');
+      // Refrescar la lista de archivos
+      const response = await axios.get(`${API_BASE}/api/files`);
+      setListaArchivos(response.data);
+    } catch {
+      alert('❌ Error al intentar eliminar el archivo.');
+    }
+  };
+
   // --- COMPONENTE DE LISTA DE ARCHIVOS REUTILIZABLE ---
   const renderFileList = (files: FileInfo[]) => (
     <div className="file-list">
@@ -157,10 +176,15 @@ function App() {
               {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
             </div>
           </div>
-          <button className="file-download" onClick={() => handleDownload(archivo.name)}>
-            <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-            Descargar
-          </button>
+          <div className="file-actions">
+            <button className="file-download" onClick={() => handleDownload(archivo.name)}>
+              <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+              Descargar
+            </button>
+            <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Eliminar archivo">
+              <Trash2 size={14} />
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -198,7 +222,7 @@ function App() {
                   <UploadCloud size={26} color="#4f8cff" />
                 </div>
                 <h3>Subir Documento</h3>
-                <p>Cargar nuevos archivos PDF al sistema</p>
+                <p>Cargar nuevos archivos PDF al sistema (limite 10mb)</p>
               </button>
 
               <button className="action-card" onClick={abrirExplorador}>

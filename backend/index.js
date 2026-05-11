@@ -129,6 +129,29 @@ app.get('/api/files/:filename', (req, res) => {
     res.download(filePath);
 });
 
+// 5. ELIMINAR ARCHIVO POR NOMBRE
+app.delete('/api/files/:filename', (req, res) => {
+    const filePath = path.join(uploadsDir, req.params.filename);
+
+    // Prevenir ataques de path traversal
+    if (!filePath.startsWith(uploadsDir)) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Archivo no encontrado' });
+    }
+
+    try {
+        fs.unlinkSync(filePath);
+        console.log('🗑️ Archivo eliminado:', req.params.filename);
+        res.json({ success: true, message: 'Archivo eliminado correctamente' });
+    } catch (err) {
+        console.error('Error al eliminar archivo:', err);
+        res.status(500).json({ error: 'No se pudo eliminar el archivo' });
+    }
+});
+
 // 5. ESTADO DEL DEPLOY (GitHub Actions)
 app.get('/api/github-status', async (_req, res) => {
     try {
