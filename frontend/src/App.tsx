@@ -62,12 +62,20 @@ function App() {
   }, [isAuthenticated]);
 
   // --- SUBIDA DE ARCHIVOS ---
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     if (file.type !== 'application/pdf') {
       alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
@@ -79,8 +87,12 @@ function App() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
-    } catch {
-      alert('❌ Hubo un error al intentar subir el archivo al servidor.');
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err) && err.response?.status === 413) {
+        alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+      } else {
+        alert('❌ Hubo un error al intentar subir el archivo al servidor.');
+      }
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }

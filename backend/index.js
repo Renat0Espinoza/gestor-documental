@@ -23,7 +23,11 @@ const storage = multer.diskStorage({
         cb(null, Date.now() + '-' + file.originalname);
     }
 });
-const upload = multer({ storage });
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const upload = multer({
+    storage,
+    limits: { fileSize: MAX_FILE_SIZE }
+});
 
 // ==========================================
 // --- FUNCIONES AUXILIARES ---
@@ -66,8 +70,19 @@ app.get('/api/files', (_req, res) => {
 });
 
 // 2. SUBIR ARCHIVO (Conectado con React)
-app.post('/api/upload', upload.single('documento'), (req, res) => {
-    try {
+app.post('/api/upload', (req, res) => {
+    upload.single('documento')(req, res, (err) => {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({
+                    success: false,
+                    error: 'El archivo es demasiado pesado. El límite máximo es de 10 MB.'
+                });
+            }
+            console.error('Error de multer:', err);
+            return res.status(500).json({ success: false, error: err.message });
+        }
+
         if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
 
         console.log('✅ ¡Éxito! Archivo guardado en disco:', req.file.filename);
@@ -77,10 +92,7 @@ app.post('/api/upload', upload.single('documento'), (req, res) => {
             message: 'Archivo guardado localmente',
             file: req.file.filename
         });
-    } catch (error) {
-        console.error('Error al guardar archivo:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
+    });
 });
 
 // 3. BUSCAR ARCHIVOS POR NOMBRE
