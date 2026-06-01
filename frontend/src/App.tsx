@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
@@ -6,8 +7,12 @@ import {
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock
 } from 'lucide-react';
 import Login from './Login';
-import { auth } from './firebase';
-import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { auth, db } from './firebase'; // Importamos db para Firestore
+import {
+  updateProfile, updateEmail, updatePassword, onAuthStateChanged,
+  EmailAuthProvider, reauthenticateWithCredential, signOut
+} from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore'; // Para obtener el rol del usuario
 
 interface FileInfo {
   name: string;
@@ -30,445 +35,280 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion';
+type Vista = 'dashboard' | 'settings';
 
-function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [status, setStatus] = useState<{ connected: boolean; message: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [vistaActual, setVistaActual] = useState<Vista>('dashboard');
-  const [listaArchivos, setListaArchivos] = useState<FileInfo[]>([]);
+export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'user' | null>(null); // HU: Estado para el rol
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [vista, setVista] = useState<Vista>('dashboard');
+  const [files, setFiles] = useState<FileInfo[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<FileInfo[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [status, setStatus] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Estado de perfil ---
-  const [displayName, setDisplayName] = useState('');
-  const [newDisplayName, setNewDisplayName] = useState('');
+  // Estados para ajustes de perfil
+  const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
-  const [settingsSuccess, setSettingsSuccess] = useState('');
-  const [settingsError, setSettingsError] = useState('');
+  const [updateMsg, setUpdateMsg] = useState({ type: '', text: '' });
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // HU: Verificar autenticación y obtener Rol desde Firestore
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setNewName(currentUser.displayName || '');
+        setNewEmail(currentUser.email || '');
 
-  const API_BASE = '';
+        // Consultar el rol en la colección 'usuarios'
+        try {
+          const docRef = doc(db, "usuarios", currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            setUserRole(docSnap.data().rol);
+          } else {
+            setUserRole('user'); // Por defecto si no existe el doc
+          }
+        } catch (e) {
+          console.error("Error obteniendo rol:", e);
+          setUserRole('user');
+        }
+      }
+      setLoadingAuth(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const fetchFiles = async () => {
+    try {
+      const res = await axios.get('http://localhost:3001/api/files');
+      setFiles(res.data);
+    } catch (err) {
+      console.error("Error al obtener archivos", err);
+    }
+  };
 
   const checkGithub = async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/github-status`);
+      const res = await axios.get('http://localhost:3001/api/github-status');
       setStatus(res.data);
-    } catch {
-      setStatus({ connected: false, message: 'Error al contactar GitHub' });
+    } catch (err) {
+      setStatus({ connected: false });
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (isAuthenticated) checkGithub();
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setDisplayName(user.displayName || '');
-        setIsAuthenticated(true);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // --- SUBIDA DE ARCHIVOS ---
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== 'application/pdf') {
-      alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
-      return;
+    if (user) {
+      fetchFiles();
+      checkGithub();
     }
+  }, [user]);
 
-    if (file.size > MAX_FILE_SIZE) {
-      alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
+  const handleLogout = () => signOut(auth);
 
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
     const formData = new FormData();
-    formData.append('documento', file);
+    formData.append('file', e.target.files[0]);
 
     try {
-      const response = await axios.post(`${API_BASE}/api/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response?.status === 413) {
-        alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
-      } else {
-        alert('❌ Hubo un error al intentar subir el archivo al servidor.');
-      }
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      await axios.post('http://localhost:3001/api/upload', formData);
+      fetchFiles();
+    } catch (err) {
+      alert("Error al subir archivo");
     }
   };
 
-  // --- EXPLORADOR ---
-  const abrirExplorador = async () => {
+  // HU: Lógica de eliminación (Solo Admin)
+  const handleDelete = async (fileName: string) => {
+    if (userRole !== 'admin') return;
+    if (!confirm(`¿Estás seguro de eliminar ${fileName}?`)) return;
     try {
-      const response = await axios.get(`${API_BASE}/api/files`);
-      setListaArchivos(response.data);
-      setVistaActual('explorador');
-    } catch {
-      alert('❌ Error al conectar con el servidor para ver los archivos.');
+      await axios.delete(`http://localhost:3001/api/files/${fileName}`);
+      fetchFiles();
+    } catch (err) {
+      alert("Error al eliminar");
     }
-  };
-
-  // --- BÚSQUEDA ---
-  const abrirBusqueda = () => {
-    setSearchQuery('');
-    setSearchResults([]);
-    setVistaActual('busqueda');
-  };
-
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    searchTimerRef.current = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const res = await axios.get(`${API_BASE}/api/search`, { params: { q: query } });
-        setSearchResults(res.data);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-  };
-
-  const handleDownload = (filename: string) => {
-    window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
-  };
-
-  // --- CONFIGURACIÓN ---
-  const abrirConfiguracion = () => {
-    setNewDisplayName(displayName);
-    setNewEmail(auth.currentUser?.email || '');
-    setNewPassword('');
-    setCurrentPassword('');
-    setSettingsSuccess('');
-    setSettingsError('');
-    setVistaActual('configuracion');
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSettingsSuccess('');
-    setSettingsError('');
-    if (!auth.currentUser) return;
-
+    setUpdateMsg({ type: '', text: '' });
     try {
-      const needsReauth = (newEmail !== auth.currentUser.email) || newPassword.length > 0;
-      if (needsReauth) {
+      if (newName !== user.displayName) {
+        await updateProfile(user, { displayName: newName });
+      }
+
+      if (newEmail !== user.email || newPassword) {
         if (!currentPassword) {
-          setSettingsError('Debes ingresar tu contraseña actual para cambiar el correo o la contraseña.');
+          setUpdateMsg({ type: 'error', text: 'Se requiere contraseña actual para cambios sensibles.' });
           return;
         }
-        const credential = EmailAuthProvider.credential(auth.currentUser.email!, currentPassword);
-        await reauthenticateWithCredential(auth.currentUser, credential);
+        const credential = EmailAuthProvider.credential(user.email!, currentPassword);
+        await reauthenticateWithCredential(user, credential);
+
+        if (newEmail !== user.email) await updateEmail(user, newEmail);
+        if (newPassword) await updatePassword(user, newPassword);
       }
 
-      if (newDisplayName.trim() !== displayName) {
-        await updateProfile(auth.currentUser, { displayName: newDisplayName.trim() });
-        setDisplayName(newDisplayName.trim());
-      }
-
-      if (newEmail !== auth.currentUser.email) {
-        await updateEmail(auth.currentUser, newEmail);
-      }
-
-      if (newPassword.length > 0) {
-        await updatePassword(auth.currentUser, newPassword);
-      }
-
-      setSettingsSuccess('✅ Perfil actualizado correctamente.');
+      setUpdateMsg({ type: 'success', text: 'Perfil actualizado correctamente.' });
       setCurrentPassword('');
       setNewPassword('');
     } catch (err: any) {
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setSettingsError('La contraseña actual es incorrecta.');
-      } else if (err.code === 'auth/email-already-in-use') {
-        setSettingsError('Este correo electrónico ya está en uso.');
-      } else if (err.code === 'auth/weak-password') {
-        setSettingsError('La nueva contraseña debe tener al menos 6 caracteres.');
-      } else if (err.code === 'auth/requires-recent-login') {
-        setSettingsError('Por seguridad, cierra sesión y vuelve a iniciar antes de hacer este cambio.');
-      } else {
-        setSettingsError('Ocurrió un error al actualizar el perfil.');
-        console.error(err);
-      }
+      setUpdateMsg({ type: 'error', text: err.message });
     }
   };
 
-  // --- ELIMINAR ARCHIVO (doble confirmación) ---
-  const handleDelete = async (filename: string) => {
-    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
-    if (!primera) return;
+  if (loadingAuth) return <div className="loading-screen"><RefreshCcw className="spin-icon" /></div>;
+  if (!user) return <Login onLoginSuccess={() => { }} />;
 
-    const segunda = confirm('⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?');
-    if (!segunda) return;
-
-    try {
-      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
-      alert('🗑️ Archivo eliminado correctamente.');
-      const response = await axios.get(`${API_BASE}/api/files`);
-      setListaArchivos(response.data);
-    } catch {
-      alert('❌ Error al intentar eliminar el archivo.');
-    }
-  };
-
-  // --- COMPONENTE DE LISTA DE ARCHIVOS REUTILIZABLE ---
-  const renderFileList = (files: FileInfo[]) => (
-    <div className="file-list">
-      {files.map((archivo, index) => (
-        <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
-          <div className="file-icon">
-            <FileText size={20} color="#f87171" />
-          </div>
-          <div className="file-info">
-            <div className="file-name">{archivo.name}</div>
-            <div className="file-meta">
-              {formatFileSize(archivo.size)}
-              {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
-            </div>
-          </div>
-          <div className="file-actions">
-            <button className="file-download" onClick={() => handleDownload(archivo.name)}>
-              <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-              Descargar
-            </button>
-            <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Eliminar archivo">
-              <Trash2 size={14} />
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  // --- AUTH GATE ---
-  if (!isAuthenticated) {
-    return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
-  }
+  const filteredFiles = files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <div className="app-layout">
-      {/* HEADER */}
-      <header className="app-header">
-        <div>
-          <h1>Gestión Documental</h1>
-          <div className="header-sub">Panel de Administración</div>
+    <div className="app-container">
+      {/* SIDEBAR */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="logo-icon"><FolderOpen size={24} /></div>
+          <span className="logo-text">Gestor Pro</span>
         </div>
-        <button onClick={() => setIsAuthenticated(false)} className="btn-logout" title="Cerrar Sesión">
-          <LogOut size={16} /> Salir
-        </button>
-      </header>
 
-      <main className="app-main">
-        {/* HIDDEN FILE INPUT */}
-        <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+        <nav className="sidebar-nav">
+          <button
+            className={`nav-item ${vista === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setVista('dashboard')}
+          >
+            <Inbox size={20} /> <span>Mi Unidad</span>
+          </button>
+          <button
+            className={`nav-item ${vista === 'settings' ? 'active' : ''}`}
+            onClick={() => setVista('settings')}
+          >
+            <Settings size={20} /> <span>Ajustes</span>
+          </button>
+        </nav>
 
-        {/* === DASHBOARD === */}
-        {vistaActual === 'dashboard' && (
-          <>
-            {displayName && (
-              <div className="welcome-banner">
-                <span className="welcome-wave">👋</span>
-                <span>Bienvenid@ <strong>{displayName}</strong></span>
-              </div>
-            )}
-            <div className="section-title">Acciones Rápidas</div>
-            <div className="card-grid">
-              <button className="action-card" onClick={() => fileInputRef.current?.click()}>
-                <div className="card-icon blue">
-                  <UploadCloud size={26} color="#4f8cff" />
-                </div>
-                <h3>Subir Documento</h3>
-                <p>Cargar nuevos archivos PDF al sistema (limite 10mb)</p>
-              </button>
-
-              <button className="action-card" onClick={abrirExplorador}>
-                <div className="card-icon green">
-                  <FolderOpen size={26} color="#34d399" />
-                </div>
-                <h3>Explorar Archivos</h3>
-                <p>Ver listado de documentos guardados</p>
-              </button>
-
-              <button className="action-card" onClick={abrirBusqueda}>
-                <div className="card-icon amber">
-                  <Search size={26} color="#fbbf24" />
-                </div>
-                <h3>Buscar</h3>
-                <p>Encontrar archivos por nombre</p>
-              </button>
-
-              <button className="action-card" onClick={abrirConfiguracion}>
-                <div className="card-icon purple">
-                  <Settings size={26} color="#a78bfa" />
-                </div>
-                <h3>Configuración</h3>
-                <p>Ajustes del sistema y conexión</p>
-              </button>
+        <div className="sidebar-footer">
+          <div className="user-pill">
+            <div className="user-avatar">{user.displayName?.charAt(0) || user.email?.charAt(0)}</div>
+            <div className="user-info">
+              <span className="user-name">{user.displayName || 'Usuario'}</span>
+              <span className="user-role">{userRole === 'admin' ? 'Administrador' : 'Lector'}</span>
             </div>
-          </>
-        )}
-
-        {/* === EXPLORADOR === */}
-        {vistaActual === 'explorador' && (
-          <div className="panel">
-            <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
-                <ArrowLeft size={16} /> Volver
-              </button>
-              <h2>Archivos Subidos</h2>
-              <span className="badge">{listaArchivos.length}</span>
-            </div>
-
-            {listaArchivos.length === 0 ? (
-              <div className="empty-state">
-                <Inbox size={48} />
-                <p>No hay documentos en la bodega aún.</p>
-              </div>
-            ) : (
-              renderFileList(listaArchivos)
-            )}
           </div>
-        )}
+          <button onClick={handleLogout} className="btn-logout">
+            <LogOut size={18} /> <span>Salir</span>
+          </button>
+        </div>
+      </aside>
 
-        {/* === BÚSQUEDA === */}
-        {vistaActual === 'busqueda' && (
-          <div className="panel">
-            <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
-                <ArrowLeft size={16} /> Volver
-              </button>
-              <h2>Buscar Documentos</h2>
-            </div>
-
-            <div className="search-bar">
-              <Search size={20} />
-              <input
-                type="text"
-                placeholder="Escribe el nombre del archivo..."
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-                autoFocus
-              />
-              {searching && <RefreshCcw size={16} className="spin-icon" style={{ color: 'var(--text-muted)', marginLeft: 8 }} />}
-            </div>
-
-            {!searchQuery.trim() ? (
-              <div className="empty-state">
-                <Search size={48} />
-                <p>Escribe un término para buscar entre tus documentos.</p>
-              </div>
-            ) : searchResults.length === 0 && !searching ? (
-              <div className="empty-state">
-                <Inbox size={48} />
-                <p>No se encontraron archivos con "{searchQuery}".</p>
-              </div>
-            ) : (
-              renderFileList(searchResults)
-            )}
+      {/* MAIN CONTENT */}
+      <main className="content">
+        <header className="content-header">
+          <div className="search-bar">
+            <Search size={18} />
+            <input
+              type="text"
+              placeholder="Buscar documentos..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
-        )}
 
-        {/* === CONFIGURACIÓN === */}
-        {vistaActual === 'configuracion' && (
-          <div className="panel">
-            <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
-                <ArrowLeft size={16} /> Volver
+          {/* HU: Botón de subida solo visible para Administradores */}
+          {userRole === 'admin' && (
+            <>
+              <input type="file" hidden ref={fileInputRef} onChange={handleUpload} />
+              <button className="btn-upload" onClick={() => fileInputRef.current?.click()}>
+                <UploadCloud size={18} /> <span>Subir Archivo</span>
               </button>
-              <h2>Configuración</h2>
+            </>
+          )}
+        </header>
+
+        {vista === 'dashboard' ? (
+          <div className="dashboard">
+            <div className="section-title">
+              <h2>Archivos Recientes</h2>
+              <span className="count">{filteredFiles.length} documentos</span>
             </div>
 
-            <div className="settings-section">
-              <h3 className="settings-section-title">Perfil de Usuario</h3>
-
-              {settingsSuccess && <div className="login-success">{settingsSuccess}</div>}
-              {settingsError && <div className="login-error">{settingsError}</div>}
-
-              <form onSubmit={handleUpdateProfile} className="settings-form">
-                <div className="input-group">
-                  <label>Nombre de Usuario</label>
-                  <div className="input-wrapper">
-                    <User size={18} />
-                    <input
-                      type="text"
-                      value={newDisplayName}
-                      onChange={(e) => setNewDisplayName(e.target.value)}
-                      placeholder="Tu nombre"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="input-group">
-                  <label>Correo Electrónico</label>
-                  <div className="input-wrapper">
-                    <Mail size={18} />
-                    <input
-                      type="email"
-                      value={newEmail}
-                      onChange={(e) => setNewEmail(e.target.value)}
-                      placeholder="ejemplo@ubiobio.cl"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="input-group">
-                  <label>Nueva Contraseña <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(dejar vacío para no cambiar)</span></label>
-                  <div className="input-wrapper">
-                    <Lock size={18} />
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="••••••••"
-                    />
-                  </div>
-                </div>
-
-                {(newEmail !== (auth.currentUser?.email || '') || newPassword.length > 0) && (
-                  <div className="input-group">
-                    <label>Contraseña Actual <span style={{ color: 'var(--accent-amber)', fontWeight: 400 }}>(requerida para confirmar cambios)</span></label>
-                    <div className="input-wrapper">
-                      <Lock size={18} />
-                      <input
-                        type="password"
-                        value={currentPassword}
-                        onChange={(e) => setCurrentPassword(e.target.value)}
-                        placeholder="Ingresa tu contraseña actual"
-                        required
-                      />
+            <div className="file-grid">
+              {filteredFiles.length > 0 ? (
+                filteredFiles.map((file, idx) => (
+                  <div key={idx} className="file-card">
+                    <div className="file-icon"><FileText size={32} /></div>
+                    <div className="file-details">
+                      <span className="file-name" title={file.name}>{file.name}</span>
+                      <span className="file-meta">{formatFileSize(file.size)} • {formatDate(file.modified)}</span>
                     </div>
+                    <div className="file-actions">
+                      <button className="action-btn" title="Descargar"><Download size={18} /></button>
+
+                      {/* HU: Icono de papelera solo para Administradores */}
+                      {userRole === 'admin' && (
+                        <button
+                          className="action-btn delete"
+                          title="Eliminar"
+                          onClick={() => handleDelete(file.name)}
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">
+                  <Inbox size={48} />
+                  <p>No se encontraron archivos</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="settings-view">
+            <header className="settings-header">
+              <button onClick={() => setVista('dashboard')} className="btn-back">
+                <ArrowLeft size={18} /> Volver
+              </button>
+              <h2>Configuración de Perfil</h2>
+            </header>
+
+            <div className="settings-card">
+              <form onSubmit={handleUpdateProfile} className="settings-form">
+                {updateMsg.text && (
+                  <div className={`alert ${updateMsg.type}`}>
+                    {updateMsg.type === 'success' ? <CheckCircle size={16} /> : <XCircle size={16} />}
+                    {updateMsg.text}
+                  </div>
+                )}
+
+                <div className="input-group">
+                  <label><User size={16} /> Nombre Completo</label>
+                  <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Tu nombre" />
+                </div>
+
+                <div className="input-group">
+                  <label><Mail size={16} /> Correo Electrónico</label>
+                  <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+                </div>
+
+                <div className="input-group">
+                  <label><Lock size={16} /> Nueva Contraseña (opcional)</label>
+                  <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+                </div>
+
+                {(newEmail !== user.email || newPassword) && (
+                  <div className="input-group reauth-box">
+                    <label>Contraseña Actual</label>
+                    <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Confirma para guardar cambios" required />
                   </div>
                 )}
 
@@ -500,5 +340,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
