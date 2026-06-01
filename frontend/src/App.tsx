@@ -90,6 +90,22 @@ function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmText?: string;
+    cancelText?: string;
+    isDangerous?: boolean;
+  } | null>(null);
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void, isDangerous = false, confirmText = 'Confirmar', cancelText = 'Cancelar') => {
+    setConfirmDialog({ isOpen: true, title, message, onConfirm, isDangerous, confirmText, cancelText });
+  };
+
+  const closeConfirm = () => setConfirmDialog(null);
+
   // --- Estado de perfil ---
   const [displayName, setDisplayName] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
@@ -285,19 +301,22 @@ function App() {
 
   const limpiarAuditoria = async () => {
     if (!auth.currentUser) return;
-    try {
-      const querySnapshot = await getDocs(collection(db, 'audit_logs'));
-      const deletePromises: Promise<void>[] = [];
-      querySnapshot.forEach((docSnap) => {
-        deletePromises.push(deleteDoc(doc(db, 'audit_logs', docSnap.id)));
-      });
-      await Promise.all(deletePromises);
-      setHistoryLogs([]);
-      showToast('Historial de cambios limpiado exitosamente.', 'success');
-    } catch (err) {
-      console.error('Error al limpiar auditoría:', err);
-      showToast('Error al limpiar el historial de cambios.', 'error');
-    }
+    
+    showConfirm('Limpiar Historial', '¿Estás seguro de que deseas eliminar todo el historial de cambios permanentemente?', async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, 'audit_logs'));
+        const deletePromises: Promise<void>[] = [];
+        querySnapshot.forEach((docSnap) => {
+          deletePromises.push(deleteDoc(doc(db, 'audit_logs', docSnap.id)));
+        });
+        await Promise.all(deletePromises);
+        setHistoryLogs([]);
+        showToast('Historial de cambios limpiado exitosamente.', 'success');
+      } catch (err) {
+        console.error('Error al limpiar auditoría:', err);
+        showToast('Error al limpiar el historial de cambios.', 'error');
+      }
+    }, true, 'Limpiar Historial');
   };
 
   const registrarAuditoria = async (accion: string, documento: string) => {
@@ -567,22 +586,21 @@ function App() {
     }
   };
 
-  // --- MOVER ARCHIVO A PAPELERA (en vez de eliminar directamente) ---
+  // --- MOVER ARCHIVO A PAPELERA ---
   const handleDelete = async (filename: string) => {
-    if (userRole === 'lector') return; // Bloqueo de seguridad
+    if (userRole === 'lector') return;
 
-    const confirmacion = confirm(`¿Estás seguro de que deseas enviar este archivo a la papelera?\n\n"${filename}"`);
-    if (!confirmacion) return;
-
-    try {
-      await axios.post(`${API_BASE}/api/files/${encodeURIComponent(filename)}/trash`);
-      showToast('Archivo movido a la papelera.', 'info');
-      registrarAuditoria('Movió a papelera', filename);
-      const response = await axios.get(`${API_BASE}/api/files`);
-      setListaArchivos(response.data);
-    } catch {
-      showToast('Error al intentar mover el archivo a la papelera.', 'error');
-    }
+    showConfirm('Mover a Papelera', `¿Estás seguro de que deseas enviar "${filename}" a la papelera?`, async () => {
+      try {
+        await axios.post(`${API_BASE}/api/files/${encodeURIComponent(filename)}/trash`);
+        showToast('Archivo movido a la papelera.', 'info');
+        registrarAuditoria('Movió a papelera', filename);
+        const response = await axios.get(`${API_BASE}/api/files`);
+        setListaArchivos(response.data);
+      } catch {
+        showToast('Error al intentar mover el archivo a la papelera.', 'error');
+      }
+    }, true, 'Mover a Papelera');
   };
 
   // --- PAPELERA ---
@@ -608,32 +626,30 @@ function App() {
   };
 
   const eliminarDefinitivo = async (filename: string) => {
-    const confirmacion = confirm(`⚠️ ADVERTENCIA: Esta acción es irreversible.\n¿Eliminar definitivamente "${filename}"?`);
-    if (!confirmacion) return;
-
-    try {
-      await axios.delete(`${API_BASE}/api/trash/${encodeURIComponent(filename)}`);
-      showToast('Archivo eliminado permanentemente.', 'info');
-      registrarAuditoria('Eliminó definitivamente', filename);
-      abrirPapelera(); // recargar
-    } catch {
-      showToast('Error al eliminar permanentemente.', 'error');
-    }
+    showConfirm('Eliminar Definitivamente', `⚠️ Esta acción es irreversible.\n¿Eliminar definitivamente "${filename}"?`, async () => {
+      try {
+        await axios.delete(`${API_BASE}/api/trash/${encodeURIComponent(filename)}`);
+        showToast('Archivo eliminado permanentemente.', 'info');
+        registrarAuditoria('Eliminó definitivamente', filename);
+        abrirPapelera(); // recargar
+      } catch {
+        showToast('Error al eliminar permanentemente.', 'error');
+      }
+    }, true, 'Eliminar Permanentemente');
   };
 
   const vaciarPapelera = async () => {
     if (trashFiles.length === 0) return;
-    const confirmacion = confirm(`⚠️ ADVERTENCIA: Vas a eliminar ${trashFiles.length} archivos permanentemente.\n¿Estás seguro?`);
-    if (!confirmacion) return;
-
-    try {
-      await axios.delete(`${API_BASE}/api/trash`);
-      showToast('La papelera ha sido vaciada.', 'info');
-      registrarAuditoria('Vació la papelera', 'Todos los archivos');
-      setTrashFiles([]);
-    } catch {
-      showToast('Error al intentar vaciar la papelera.', 'error');
-    }
+    showConfirm('Vaciar Papelera', `⚠️ Vas a eliminar ${trashFiles.length} archivos permanentemente.\n¿Estás seguro?`, async () => {
+      try {
+        await axios.delete(`${API_BASE}/api/trash`);
+        showToast('La papelera ha sido vaciada.', 'info');
+        registrarAuditoria('Vació la papelera', 'Todos los archivos');
+        setTrashFiles([]);
+      } catch {
+        showToast('Error al intentar vaciar la papelera.', 'error');
+      }
+    }, true, 'Vaciar Papelera');
   };
 
   // --- CATEGORÍAS ---
@@ -655,15 +671,17 @@ function App() {
   };
 
   const eliminarCategoria = async (id: string, nombre: string) => {
-    if (!confirm(`¿Eliminar la categoría "${nombre}"?`)) return;
-    try {
-      await deleteDoc(doc(db, 'categories', id));
-      await cargarCategorias();
-      registrarAuditoria('Eliminó categoría', nombre);
-    } catch (err) {
-      showToast('Error al eliminar la categoría.', 'error');
-      console.error(err);
-    }
+    showConfirm('Eliminar Categoría', `¿Estás seguro de eliminar la categoría "${nombre}"?`, async () => {
+      try {
+        await deleteDoc(doc(db, 'categories', id));
+        await cargarCategorias();
+        registrarAuditoria('Eliminó categoría', nombre);
+        showToast('Categoría eliminada.', 'success');
+      } catch (err) {
+        showToast('Error al eliminar la categoría.', 'error');
+        console.error(err);
+      }
+    }, true, 'Eliminar Categoría');
   };
 
   const asignarCategoria = async (filename: string, categoryId: string) => {
@@ -1247,41 +1265,38 @@ function App() {
                 </button>
               </div>
             </div>
-            <div className="table-container">
-              <table className="user-table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Usuario</th>
-                    <th>Acción</th>
-                    <th>Documento / Elemento</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historyLogs.map(log => (
-                    <tr key={log.id}>
-                      <td style={{ color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
-                      <td style={{ fontWeight: 500 }}>{log.usuario}</td>
-                      <td>
+            <div className="file-list" style={{ padding: '0 24px 24px' }}>
+              {historyLogs.length > 0 ? historyLogs.map((log, index) => (
+                <div key={log.id} className="file-item animate-fade" style={{ animationDelay: `${index * 0.03}s` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+                    <div className="file-icon" style={{ background: 'rgba(79, 140, 255, 0.1)', color: '#4f8cff' }}>
+                      <History size={20} />
+                    </div>
+                    <div className="file-info" style={{ flex: 1 }}>
+                      <div className="file-name" style={{ fontSize: '15px' }}>
+                        <strong style={{ color: 'var(--text-primary)' }}>{log.usuario}</strong>
+                        <span style={{ color: 'var(--text-muted)', margin: '0 8px' }}>→</span>
                         <span style={{
-                          padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600,
-                          background: 'rgba(79,140,255,0.1)', color: '#4f8cff'
+                          padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600,
+                          background: log.accion.includes('Eliminó') || log.accion.includes('papelera') ? 'rgba(248, 113, 113, 0.1)' : log.accion.includes('Subió') || log.accion.includes('Creó') || log.accion.includes('Restauró') ? 'rgba(52, 211, 153, 0.1)' : 'rgba(79, 140, 255, 0.1)',
+                          color: log.accion.includes('Eliminó') || log.accion.includes('papelera') ? '#f87171' : log.accion.includes('Subió') || log.accion.includes('Creó') || log.accion.includes('Restauró') ? '#34d399' : '#4f8cff'
                         }}>
                           {log.accion}
                         </span>
-                      </td>
-                      <td style={{ color: 'var(--text-secondary)' }}>{log.documento}</td>
-                    </tr>
-                  ))}
-                  {historyLogs.length === 0 && (
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
-                        No hay registros de auditoría recientes (últimos 30 días).
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                        <span style={{ color: 'var(--text-secondary)', marginLeft: '12px' }}>{log.documento}</span>
+                      </div>
+                      <div className="file-meta" style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Clock size={12} /> {formatDate(log.fecha)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )) : (
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                  <History size={48} style={{ opacity: 0.2, marginBottom: '16px' }} />
+                  <p>No hay registros de auditoría recientes (últimos 30 días).</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1613,6 +1628,44 @@ function App() {
         }}>
           {toast.type === 'error' ? <XCircle size={18} /> : toast.type === 'info' ? <CheckCircle size={18} /> : <CheckCircle size={18} />}
           <span style={{ fontSize: '14px', fontWeight: 500 }}>{toast.message}</span>
+        </div>
+      )}
+
+      {/* CONFIRM DIALOG MODAL */}
+      {confirmDialog?.isOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+        }}>
+          <div style={{
+            background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 'var(--radius-xl)',
+            padding: '24px', width: '100%', maxWidth: '400px', boxShadow: 'var(--shadow-lg)',
+            animation: 'fadeIn 0.2s ease', display: 'flex', flexDirection: 'column', gap: '16px'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {confirmDialog.isDangerous ? <Trash2 color="var(--accent-red)" size={20} /> : <Filter color="var(--accent-blue)" size={20} />}
+              {confirmDialog.title}
+            </h3>
+            <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+              {confirmDialog.message}
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <button onClick={closeConfirm} className="btn-secondary" style={{ padding: '10px 16px' }}>
+                {confirmDialog.cancelText}
+              </button>
+              <button
+                onClick={() => { confirmDialog.onConfirm(); closeConfirm(); }}
+                style={{
+                  background: confirmDialog.isDangerous ? 'var(--accent-red)' : 'var(--gradient-main)',
+                  backgroundSize: '200% auto',
+                  color: 'white', border: 'none', padding: '10px 16px', borderRadius: 'var(--radius-sm)',
+                  fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s ease'
+                }}
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
