@@ -1235,8 +1235,20 @@ function App() {
                             <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No disponible</span>
                           ) : (
                             <select
-                              value={u.rol} onChange={(e) => cambiarRol(u.id, e.target.value)}
-                              style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px' }}
+                              value={u.rol} 
+                              onChange={(e) => cambiarRol(u.id, e.target.value)}
+                              disabled={u.rol === 'admin'}
+                              style={{ 
+                                background: u.rol === 'admin' ? 'var(--bg-card)' : 'var(--bg-primary)', 
+                                color: u.rol === 'admin' ? 'var(--text-muted)' : 'white', 
+                                border: '1px solid var(--border-card)', 
+                                padding: '6px 10px', 
+                                borderRadius: '4px', 
+                                outline: 'none', 
+                                fontSize: '13px',
+                                opacity: u.rol === 'admin' ? 0.6 : 1,
+                                cursor: u.rol === 'admin' ? 'not-allowed' : 'pointer'
+                              }}
                             >
                               <option value="admin">Administrador</option>
                               <option value="colaborador">Colaborador</option>
@@ -1256,14 +1268,16 @@ function App() {
         {/* === HISTORIAL (Auditoría) === */}
         {vistaActual === 'historial' && (
           <div className="panel animate-fade">
-            <div className="panel-header">
-              <h2>Historial de Auditoría</h2>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button className="btn-secondary" onClick={() => setVistaActual('dashboard')}>Volver al Dashboard</button>
-                <button className="btn-save" onClick={limpiarAuditoria} style={{ background: 'var(--accent-red)', border: 'none' }}>
-                  <Trash2 size={16} style={{ marginRight: 6 }} /> Limpiar Historial
+            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                  <ArrowLeft size={16} /> Volver
                 </button>
+                <h2 style={{ margin: 0 }}>Historial de Auditoría</h2>
               </div>
+              <button className="btn-save" onClick={limpiarAuditoria} style={{ background: 'var(--accent-red)', border: 'none', padding: '8px 16px', fontSize: '13px' }}>
+                <Trash2 size={14} style={{ marginRight: 6 }} /> Limpiar Historial
+              </button>
             </div>
             <div className="file-list" style={{ padding: '0 24px 24px' }}>
               {historyLogs.length > 0 ? historyLogs.map((log, index) => (
@@ -1650,7 +1664,7 @@ function App() {
               {confirmDialog.message}
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
-              <button onClick={closeConfirm} className="btn-secondary" style={{ padding: '10px 16px' }}>
+              <button onClick={closeConfirm} className="btn-secondary">
                 {confirmDialog.cancelText}
               </button>
               <button

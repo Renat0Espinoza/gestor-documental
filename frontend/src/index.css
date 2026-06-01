@@ -225,6 +225,24 @@ html, body, #root {
 }
 .btn-link:hover { color: var(--accent-purple); }
 
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 12px 20px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+.btn-secondary:hover {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
 /* ===== APP LAYOUT ===== */
 .app-layout {
   display: flex;
