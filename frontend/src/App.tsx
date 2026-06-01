@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase'; // <-- Modificado para incluir db
-import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
 import { doc, getDoc, collection, getDocs, updateDoc } from 'firebase/firestore'; // <-- Funciones de Firestore
 
 interface FileInfo {
