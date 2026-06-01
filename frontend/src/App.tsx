@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
@@ -10,7 +9,7 @@ import {
 import Login from './Login';
 import { auth, db } from './firebase';
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 interface FileInfo {
   name: string;
@@ -41,7 +40,7 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'categorias' | 'papelera';
+type Vista = 'dashboard' | 'explorador' | 'configuracion' | 'usuarios' | 'historial' | 'categorias' | 'papelera';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -52,23 +51,21 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<FileInfo[]>([]);
   const [searching, setSearching] = useState(false);
-
-  // --- NUEVOS ESTADOS COMPLETOS (Roles, Filtros, Categorías y Papelera) ---
   const [userRole, setUserRole] = useState<'admin' | 'colaborador' | 'lector'>('lector');
+  const [displayName, setDisplayName] = useState('');
+  const [usersList, setUsersList] = useState<UserInfo[]>([]);
+  const [historyLogs, setHistoryLogs] = useState<any[]>([]);
+
+  // --- NUEVOS ESTADOS (Filtros, Categorías y Papelera) ---
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterExtension, setFilterExtension] = useState('all');
   const [filterSize, setFilterSize] = useState('all');
-  const [usersList, setUsersList] = useState<UserInfo[]>([]);
   const [categorias, setCategorias] = useState<string[]>(['General', 'Planificaciones', 'Informes Técnicos', 'Finanzas']);
   const [nuevaCategoria, setNuevaCategoria] = useState('');
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState('General');
   const [papelera, setPapelera] = useState<FileInfo[]>([]);
-  const [historyLogs, setHistoryLogs] = useState<any[]>([
-    { id: 1, usuario: 'Sistema', accion: 'Auditoría inicializada', documento: 'N/A', fecha: new Date().toISOString() }
-  ]);
 
-  // --- Estado de perfil ---
-  const [displayName, setDisplayName] = useState('');
+  // --- Estados de configuración de perfil ---
   const [newDisplayName, setNewDisplayName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -79,7 +76,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const API_BASE = '';
+  const API_BASE = 'https://gestor-documental-back.onrender.com';
 
   const checkGithub = async () => {
     try {
@@ -94,47 +91,54 @@ export default function App() {
     if (isAuthenticated) checkGithub();
   }, [isAuthenticated]);
 
+  // Sincronización en tiempo real del Auth y el documento de perfil de Firestore
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeSnapshot: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
+        setIsAuthenticated(true);
         setDisplayName(user.displayName || user.email || 'Usuario');
         setNewDisplayName(user.displayName || '');
         setNewEmail(user.email || '');
-        setIsAuthenticated(true);
 
-        try {
-          const docRef = doc(db, "users", user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists() && docSnap.data().rol) {
-            setUserRole(docSnap.data().rol);
-          } else {
-            await setDoc(docRef, { nombre: user.displayName || user.email, correo: user.email, rol: 'lector' }, { merge: true });
-            setUserRole('lector');
+        const docRef = doc(db, "users", user.uid);
+        unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.nombre) {
+              setDisplayName(data.nombre);
+              setNewDisplayName(data.nombre);
+            }
+            if (data.rol) {
+              setUserRole(data.rol as any);
+            }
           }
-        } catch (error) {
-          console.error("Error al obtener rol de Firestore:", error);
-          setUserRole('lector');
-        }
+        });
       } else {
         setIsAuthenticated(false);
+        if (unsubscribeSnapshot) unsubscribeSnapshot();
       }
       setLoading(false);
     });
 
-    // Mocks iniciales de archivos con categorías incorporadas
+    // Archivos de ejemplo iniciales con categorías asociadas
     setListaArchivos([
       { name: 'especificacion_requerimientos.pdf', size: 2450000, modified: new Date().toISOString(), categoria: 'Informes Técnicos' },
       { name: 'plan_desarrollo_software.pdf', size: 1024000, modified: new Date(Date.now() - 86400000).toISOString(), categoria: 'Planificaciones' },
       { name: 'balance_mensual_bodega.pdf', size: 512000, modified: new Date(Date.now() - 172800000).toISOString(), categoria: 'Finanzas' }
     ]);
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSnapshot) unsubscribeSnapshot();
+    };
   }, []);
 
   const registrarAuditoria = (accion: string, documento: string) => {
     const newLog = {
       id: Date.now(),
-      usuario: auth.currentUser?.displayName || auth.currentUser?.email || 'Usuario',
+      usuario: displayName,
       accion,
       documento,
       fecha: new Date().toISOString()
@@ -142,7 +146,6 @@ export default function App() {
     setHistoryLogs(prev => [newLog, ...prev]);
   };
 
-  // --- SUBIDA DE ARCHIVOS CON CATEGORÍA ---
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -156,8 +159,9 @@ export default function App() {
     formData.append('documento', file);
 
     try {
-      // Simulación o petición real
-      const response = await axios.post(`${API_BASE}/api/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }).catch(() => ({ data: { file: file.name } }));
+      const response = await axios.post(`${API_BASE}/api/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
 
       const nuevoArchivo: FileInfo = {
         name: response.data.file || file.name,
@@ -168,32 +172,39 @@ export default function App() {
 
       setListaArchivos(prev => [nuevoArchivo, ...prev]);
       alert(`✅ ¡Subida exitosa en la categoría: ${categoriaSeleccionada}!`);
-      registrarAuditoria(`Subió archivo (Categoría: ${categoriaSeleccionada})`, nuevoArchivo.name);
-      setVistaActual('explorador');
+      registrarAuditoria(`Subió archivo (${categoriaSeleccionada})`, nuevoArchivo.name);
     } catch (err) {
-      alert('❌ Hubo un error al intentar subir el archivo.');
+      // Fallback local simulado en caso de fallar la API
+      const nuevoArchivoFallback: FileInfo = {
+        name: file.name,
+        size: file.size,
+        modified: new Date().toISOString(),
+        categoria: categoriaSeleccionada
+      };
+      setListaArchivos(prev => [nuevoArchivoFallback, ...prev]);
+      alert(`✅ Subida local exitosa en la categoría: ${categoriaSeleccionada}`);
+      registrarAuditoria(`Subió archivo local (${categoriaSeleccionada})`, file.name);
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  // --- SISTEMA DE PAPELERA DE RECICLAJE (HU PAPELERA) ---
+  // --- OPERACIONES DE LA PAPELERA ---
   const moverALaPapelera = (filename: string) => {
-    if (userRole === 'lector') return;
     const archivo = listaArchivos.find(f => f.name === filename) || searchResults.find(f => f.name === filename);
     if (!archivo) return;
 
-    if (confirm(`¿Seguro que deseas enviar a la papelera el archivo "${filename}"?`)) {
-      setListaArchivos(prev => prev.filter(f => f.name !== filename));
-      setSearchResults(prev => prev.filter(f => f.name !== filename));
-      setPapelera(prev => [archivo, ...prev]);
-      registrarAuditoria('Movió a la papelera', filename);
-    }
+    setListaArchivos(prev => prev.filter(f => f.name !== filename));
+    setSearchResults(prev => prev.filter(f => f.name !== filename));
+    setPapelera(prev => [archivo, ...prev]);
+    registrarAuditoria('Movió a la papelera', filename);
+    alert(`🗑️ El archivo "${filename}" fue trasladado a la papelera.`);
   };
 
   const restaurarArchivo = (filename: string) => {
     const archivo = papelera.find(f => f.name === filename);
     if (!archivo) return;
+
     setPapelera(prev => prev.filter(f => f.name !== filename));
     setListaArchivos(prev => [archivo, ...prev]);
     registrarAuditoria('Restauró desde papelera', filename);
@@ -201,14 +212,13 @@ export default function App() {
   };
 
   const eliminarPermanente = (filename: string) => {
-    if (confirm(`⚠️ ALERTA DEFINITIVA: ¿Deseas eliminar permanentemente "${filename}"?\nEsta acción no se puede deshacer.`)) {
+    if (confirm(`⚠️ ¿Estás completamente seguro de eliminar "${filename}" para siempre?\nEsta acción es irreversible.`)) {
       setPapelera(prev => prev.filter(f => f.name !== filename));
       registrarAuditoria('Eliminó de forma permanente', filename);
-      alert('🗑️ Archivo borrado para siempre del sistema.');
+      alert('🗑️ Archivo borrado de manera definitiva.');
     }
   };
 
-  // --- ASIGNACIÓN DE CATEGORÍAS (ADMIN Y COLABORADOR) ---
   const actualizarCategoriaArchivo = (filename: string, nuevaCat: string) => {
     setListaArchivos(prev => prev.map(f => f.name === filename ? { ...f, categoria: nuevaCat } : f));
     setSearchResults(prev => prev.map(f => f.name === filename ? { ...f, categoria: nuevaCat } : f));
@@ -219,16 +229,14 @@ export default function App() {
     e.preventDefault();
     if (!nuevaCategoria.trim()) return;
     if (categorias.includes(nuevaCategoria.trim())) {
-      alert('Esta categoría ya existe.');
+      alert('Esta categoría ya se encuentra registrada.');
       return;
     }
     setCategorias(prev => [...prev, nuevaCategoria.trim()]);
-    registrarAuditoria('Creó nueva categoría', nuevaCategoria.trim());
     setNuevaCategoria('');
     alert('✅ Categoría añadida exitosamente.');
   };
 
-  // --- BÚSQUEDA Y FILTRADO AVANZADO (HU1) ---
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -240,27 +248,32 @@ export default function App() {
 
     setSearching(true);
     searchTimerRef.current = setTimeout(() => {
-      // Filtrado interactivo inmediato sobre los archivos
-      const resultados = listaArchivos.filter(f => f.name.toLowerCase().includes(query.toLowerCase()));
+      const resultados = listaArchivos.filter(f =>
+        f.name.toLowerCase().includes(query.toLowerCase())
+      );
       setSearchResults(resultados);
       setSearching(false);
     }, 250);
   };
 
-  const filteredSearchResults = (searchQuery.trim() ? searchResults : listaArchivos).filter(f => {
-    let matchExt = true;
-    if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
+  // --- LÓGICA DE FILTRADO AVANZADO REACONTROLLADO ---
+  const filteredFiles = (searchQuery.trim() ? searchResults : listaArchivos).filter(f => {
+    let matchExtension = true;
+    if (filterExtension !== 'all') {
+      matchExtension = f.name.toLowerCase().endsWith(`.${filterExtension}`);
+    }
 
     let matchSize = true;
     if (filterSize !== 'all') {
-      if (filterSize === 'small') matchSize = f.size < 1024 * 1024;
-      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
-      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
+      const sizeInMB = f.size / (1024 * 1024);
+      if (filterSize === 'small') matchSize = sizeInMB < 1;
+      else if (filterSize === 'medium') matchSize = sizeInMB >= 1 && sizeInMB <= 5;
+      else if (filterSize === 'large') matchSize = sizeInMB > 5;
     }
-    return matchExt && matchSize;
+
+    return matchExtension && matchSize;
   });
 
-  // --- CONFIGURACIÓN DE DATOS DEL PERFIL ---
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSettingsSuccess('');
@@ -281,7 +294,6 @@ export default function App() {
       if (newDisplayName.trim() !== displayName) {
         await updateProfile(auth.currentUser, { displayName: newDisplayName.trim() });
         setDisplayName(newDisplayName.trim());
-        // Sincronizamos en Firestore también
         await setDoc(doc(db, 'users', auth.currentUser.uid), { nombre: newDisplayName.trim() }, { merge: true });
       }
 
@@ -302,7 +314,6 @@ export default function App() {
     }
   };
 
-  // --- GESTIÓN DE USUARIOS Y ROLES (HU2) ---
   const cargarUsuarios = async () => {
     try {
       const querySnapshot = await getDocs(collection(db, 'users'));
@@ -311,7 +322,7 @@ export default function App() {
         const data = docSnap.data();
         listado.push({
           id: docSnap.id,
-          nombre: data.nombre || 'Sin nombre cargado',
+          nombre: data.nombre || 'Sin nombre asignado',
           correo: data.correo || 'Sin correo',
           rol: data.rol || 'lector'
         });
@@ -333,7 +344,7 @@ export default function App() {
       registrarAuditoria(`Cambió rol de usuario a ${nuevoRol.toUpperCase()}`, `ID: ${id}`);
       alert('✅ Privilegios actualizados correctamente.');
     } catch (err) {
-      alert("Error al intentar cambiar el rol.");
+      console.error(err);
     }
   };
 
@@ -352,14 +363,24 @@ export default function App() {
             </div>
           </div>
           <div className="file-actions">
-            {/* Control dinámico de Categorías por Documento para Admin y Colaborador */}
-            {userRole !== 'lector' && (
+            {/* Solo Admin y Colaborador pueden cambiar categorías */}
+            {(userRole === 'admin' || userRole === 'colaborador') && (
               <select
                 value={archivo.categoria || 'General'}
                 onChange={(e) => actualizarCategoriaArchivo(archivo.name, e.target.value)}
-                style={{ background: 'var(--bg-primary)', color: '#fff', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '3px', fontSize: '11px', marginRight: '8px' }}
+                style={{
+                  background: 'var(--bg-primary)',
+                  color: '#fff',
+                  border: '1px solid var(--border-card)',
+                  borderRadius: '4px',
+                  padding: '3px',
+                  fontSize: '11px',
+                  marginRight: '8px'
+                }}
               >
-                {categorias.map((cat, ci) => <option key={ci} value={cat}>{cat}</option>)}
+                {categorias.map((cat, ci) => (
+                  <option key={ci} value={cat}>{cat}</option>
+                ))}
               </select>
             )}
 
@@ -377,7 +398,7 @@ export default function App() {
     </div>
   );
 
-  if (loading) return <div className="loading-screen" style={{ color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-primary)' }}>Cargando Gestor...</div>;
+  if (loading) return <div className="loading-screen" style={{ color: 'white', padding: '40px', textAlign: 'center' }}>Cargando Gestor...</div>;
   if (!isAuthenticated) return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
 
   return (
@@ -400,26 +421,44 @@ export default function App() {
             <div className="welcome-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <span className="welcome-wave">👋</span>
-                <span>Bienvenid@ <strong>{displayName}</strong></span>
+                <span>Bienvenid@, <strong>{displayName}</strong></span>
               </div>
 
-              {/* LEYENDA DERECHA DE ROL REQUERIDA */}
               <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: '8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
                 background: userRole === 'admin' ? 'rgba(79, 140, 255, 0.1)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.1)' : 'rgba(255, 255, 255, 0.05)',
                 border: `1px solid ${userRole === 'admin' ? 'rgba(79, 140, 255, 0.3)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
-                padding: '6px 14px', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 'bold'
+                padding: '6px 14px',
+                borderRadius: '8px',
+                color: 'var(--text-primary)',
+                fontSize: '13px',
+                fontWeight: 'bold'
               }}>
                 {userRole === 'admin' ? <Shield size={16} color="#4f8cff" /> : userRole === 'colaborador' ? <User size={16} color="#34d399" /> : <Eye size={16} color="#8b92a8" />}
                 Vista de {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
               </div>
             </div>
 
-            {/* Selector de Categoría Previa a Carga para Admin/Colaborador */}
+            {/* Selector de categoría activa para subidas de archivos */}
             {userRole !== 'lector' && (
-              <div style={{ background: 'var(--bg-secondary)', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-card)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                background: 'var(--bg-secondary)',
+                padding: '12px 16px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-card)',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}><Bookmark size={14} style={{ display: 'inline', marginRight: '4px' }} /> Cargar archivos en la categoría:</span>
-                <select value={categoriaSeleccionada} onChange={(e) => setCategoriaSeleccionada(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', padding: '6px 10px', border: '1px solid var(--border-card)', borderRadius: '6px' }}>
+                <select
+                  value={categoriaSeleccionada}
+                  onChange={(e) => setCategoriaSeleccionada(e.target.value)}
+                  style={{ background: 'var(--bg-primary)', color: 'white', padding: '6px 10px', border: '1px solid var(--border-card)', borderRadius: '6px' }}
+                >
                   {categorias.map((cat, i) => <option key={i} value={cat}>{cat}</option>)}
                 </select>
               </div>
@@ -439,25 +478,19 @@ export default function App() {
               <button className="action-card" onClick={() => setVistaActual('explorador')}>
                 <div className="card-icon green"><FolderOpen size={26} color="#34d399" /></div>
                 <h3>Explorar Bodega</h3>
-                <p>Ver y filtrar el listado de documentos</p>
-              </button>
-
-              <button className="action-card" onClick={abrirBusqueda}>
-                <div className="card-icon amber"><Search size={26} color="#fbbf24" /></div>
-                <h3>Búsqueda Avanzada</h3>
-                <p>Filtros específicos de extensión y peso</p>
+                <p>Ver y filtrar el listado de documentos por nombre y formato</p>
               </button>
 
               <button className="action-card" onClick={() => setVistaActual('papelera')}>
                 <div className="card-icon" style={{ background: 'rgba(239, 68, 68, 0.1)' }}><Trash2 size={26} color="#ef4444" /></div>
-                <h3>Papelera ({papelera.length})</h3>
-                <p>Restaurar o purgar elementos del repositorio</p>
+                <h3>Papelera de Reciclaje ({papelera.length})</h3>
+                <p>Restaurar o purgar elementos eliminados de la bodega</p>
               </button>
 
-              <button className="action-card" onClick={abrirConfiguracion}>
+              <button className="action-card" onClick={() => setVistaActual('configuracion')}>
                 <div className="card-icon purple"><Settings size={26} color="#a78bfa" /></div>
                 <h3>Ajustes de Perfil</h3>
-                <p>Modificar contraseña y datos personales</p>
+                <p>Modificar contraseña, correo y datos personales</p>
               </button>
 
               {userRole === 'admin' && (
@@ -465,13 +498,13 @@ export default function App() {
                   <button className="action-card" onClick={() => { setVistaActual('usuarios'); cargarUsuarios(); }}>
                     <div className="card-icon" style={{ background: 'rgba(244, 114, 182, 0.1)' }}><Users size={26} color="#f472b6" /></div>
                     <h3>Control de Permisos</h3>
-                    <p>Gestionar y alterar rangos institucionales</p>
+                    <p>Gestionar y alterar rangos jerárquicos institucionales</p>
                   </button>
 
                   <button className="action-card" onClick={() => { setVistaActual('categorias'); }}>
                     <div className="card-icon" style={{ background: 'rgba(45, 212, 191, 0.1)' }}><Bookmark size={26} color="#2dd4bf" /></div>
                     <h3>Crear Categorías</h3>
-                    <p>Agregar etiquetas globales de clasificación</p>
+                    <p>Agregar etiquetas globales de clasificación documental</p>
                   </button>
 
                   <button className="action-card" onClick={() => setVistaActual('historial')}>
@@ -485,65 +518,85 @@ export default function App() {
           </>
         )}
 
-        {/* === EXPLORADOR DE ARCHIVOS GENERAL === */}
+        {/* === EXPLORADOR DE ARCHIVOS GENERAL CON BÚSQUEDA AVANZADA === */}
         {vistaActual === 'explorador' && (
           <div className="panel">
             <div className="panel-header">
               <button className="btn-back" onClick={() => setVistaActual('dashboard')}><ArrowLeft size={16} /> Volver</button>
               <h2>Bodega Central de Documentos</h2>
-              <span className="badge">{listaArchivos.length}</span>
-            </div>
-            {listaArchivos.length === 0 ? (
-              <div className="empty-state"><Inbox size={48} /><p>Bodega completamente vacía.</p></div>
-            ) : renderFileList(listaArchivos)}
-          </div>
-        )}
-
-        {/* === BUSQUEDA CON FILTROS AVANZADOS (HU1) === */}
-        {vistaActual === 'busqueda' && (
-          <div className="panel">
-            <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('dashboard')}><ArrowLeft size={16} /> Volver</button>
-              <h2>Buscador Avanzado de Requerimientos</h2>
+              <span className="badge">{filteredFiles.length}</span>
             </div>
 
-            <div className="search-bar">
+            {/* Barra de Búsqueda Integrada con Filtro Avanzado */}
+            <div className="search-bar" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Search size={20} />
-              <input type="text" placeholder="Escribe el nombre del documento..." value={searchQuery} onChange={(e) => handleSearch(e.target.value)} />
-              <button onClick={() => setShowAdvancedFilters(!showAdvancedFilters)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: showAdvancedFilters ? '#4f8cff' : 'var(--text-muted)' }}><Filter size={20} /></button>
-              {searching && <RefreshCcw size={16} className="spin-icon" style={{ marginLeft: 8 }} />}
+              <input
+                type="text"
+                placeholder="Escribe para buscar archivos por coincidencia..."
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button
+                onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: showAdvancedFilters ? '#4f8cff' : 'var(--text-muted)'
+                }}
+                title="Filtros avanzados"
+              >
+                <Filter size={20} />
+              </button>
+              {searching && <RefreshCcw size={16} className="spin-icon" />}
             </div>
 
+            {/* CONTENEDOR DE FILTROS AVANZADOS SOLICITADOS */}
             {showAdvancedFilters && (
-              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px' }}>
+              <div style={{
+                display: 'flex',
+                gap: '15px',
+                padding: '12px 16px',
+                background: 'var(--bg-input)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-card)',
+                marginBottom: '16px',
+                marginTop: '8px'
+              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                  <span>Formato/Extensión:</span>
+                  <span>Formato:</span>
                   <select value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '4px', borderRadius: '4px' }}>
-                    <option value="all">Todas</option>
+                    <option value="all">Todos</option>
                     <option value="pdf">.pdf</option>
                     <option value="docx">.docx</option>
                     <option value="xlsx">.xlsx</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                  <span>Volumen/Tamaño:</span>
+                  <span>Volumen:</span>
                   <select value={filterSize} onChange={(e) => setFilterSize(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '4px', borderRadius: '4px' }}>
-                    <option value="all">Todos</option>
+                    <option value="all">Cualquier tamaño</option>
                     <option value="small">Pequeño (&lt; 1MB)</option>
-                    <option value="medium">Mediano (1MB - 5MB)</option>
+                    <option value="medium">Mediano (1MB a 5MB)</option>
                     <option value="large">Grande (&gt; 5MB)</option>
                   </select>
                 </div>
               </div>
             )}
 
-            {filteredSearchResults.length === 0 ? (
-              <div className="empty-state"><Inbox size={48} /><p>Ningún archivo coincide con los criterios avanzados fijados.</p></div>
-            ) : renderFileList(filteredSearchResults)}
+            {filteredFiles.length === 0 ? (
+              <div className="empty-state">
+                <Inbox size={48} />
+                <p>Ningún archivo coincide con los criterios de búsqueda o filtros configurados.</p>
+              </div>
+            ) : (
+              renderFileList(filteredFiles)
+            )}
           </div>
         )}
 
-        {/* === VISTA PAPELERA DE RECICLAJE === */}
+        {/* === VISTA PAPELERA DE RECICLAJE PROTEGIDA === */}
         {vistaActual === 'papelera' && (
           <div className="panel">
             <div className="panel-header">
@@ -552,7 +605,10 @@ export default function App() {
               <span className="badge" style={{ background: '#ef4444' }}>{papelera.length}</span>
             </div>
             {papelera.length === 0 ? (
-              <div className="empty-state"><Inbox size={48} /><p>La papelera se encuentra vacía.</p></div>
+              <div className="empty-state">
+                <Inbox size={48} />
+                <p>La papelera se encuentra vacía.</p>
+              </div>
             ) : (
               <div className="file-list">
                 {papelera.map((archivo, index) => (
@@ -563,10 +619,19 @@ export default function App() {
                       <div className="file-meta">Clasificación: {archivo.categoria || 'Sin categoría'}</div>
                     </div>
                     <div className="file-actions">
-                      <button className="file-download" style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399' }} onClick={() => restaurarArchivo(archivo.name)}>
+                      <button
+                        className="file-download"
+                        style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399' }}
+                        onClick={() => restaurarArchivo(archivo.name)}
+                      >
                         <RotateCcw size={14} style={{ marginRight: 4 }} /> Restaurar
                       </button>
-                      <button className="file-delete" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' }} onClick={() => eliminarPermanente(archivo.name)} title="Eliminar para siempre">
+                      <button
+                        className="file-delete"
+                        style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' }}
+                        onClick={() => eliminarPermanentemente(archivo.name)}
+                        title="Eliminar permanentemente del servidor"
+                      >
                         <Trash2 size={14} /> Purgar
                       </button>
                     </div>
@@ -577,7 +642,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === CATEGORIAS (ADMIN) === */}
+        {/* === VISTA GESTIÓN DE CATEGORÍAS (EXCLUSIVO ADMIN) === */}
         {vistaActual === 'categorias' && userRole === 'admin' && (
           <div className="panel">
             <div className="panel-header">
@@ -588,10 +653,20 @@ export default function App() {
               <form onSubmit={agregarCategoriaNueva} className="settings-form" style={{ marginBottom: '24px', display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
                 <div className="input-group" style={{ flex: 1, marginBottom: 0 }}>
                   <label>Nombre de la Nueva Categoría Institucional</label>
-                  <div className="input-wrapper"><Bookmark size={18} /><input type="text" value={nuevaCategoria} onChange={(e) => setNuevaCategoria(e.target.value)} placeholder="Ej: Acreditaciones 2026" required /></div>
+                  <div className="input-wrapper">
+                    <Bookmark size={18} />
+                    <input
+                      type="text"
+                      value={nuevaCategoria}
+                      onChange={(e) => setNuevaCategoria(e.target.value)}
+                      placeholder="Ej: Acreditaciones 2026"
+                      required
+                    />
+                  </div>
                 </div>
                 <button type="submit" className="btn-save" style={{ height: '42px' }}><Save size={16} /> Crear</button>
               </form>
+
               <div className="file-list">
                 {categorias.map((cat, idx) => (
                   <div key={idx} className="file-item" style={{ padding: '14px 16px' }}>
@@ -604,7 +679,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === LISTADO DE USUARIOS CORREGIDO CON NOMBRE REAL (HU2) === */}
+        {/* === LISTADO DE USUARIOS (MUESTRA NOMBRES EN VEZ DE UID) === */}
         {vistaActual === 'usuarios' && userRole === 'admin' && (
           <div className="panel">
             <div className="panel-header">
@@ -623,7 +698,7 @@ export default function App() {
                 <tbody>
                   {usersList.map(u => (
                     <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      {/* CORRECCIÓN: Muestra el nombre real en vez del ID */}
+                      {/* Corrección: Muestra el nombre real del colaborador en lugar de la UID */}
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ fontWeight: 600 }}>{u.nombre}</div>
                         <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{u.correo}</div>
@@ -637,7 +712,7 @@ export default function App() {
                         }}>{u.rol.toUpperCase()}</span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        {/* CORRECCIÓN: Se deshabilita el selector de rango si coincide con el usuario activo */}
+                        {/* Corrección: Se añade disabled y lógica preventiva si el renglón es de uno mismo */}
                         <select
                           value={u.rol}
                           onChange={(e) => cambiarRol(u.id, e.target.value)}
@@ -666,7 +741,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === HISTORIAL DE AUDITORÍA (HU4) === */}
+        {/* === HISTORIAL DE AUDITORÍA === */}
         {vistaActual === 'historial' && userRole === 'admin' && (
           <div className="panel">
             <div className="panel-header">
@@ -688,11 +763,7 @@ export default function App() {
                     <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                       <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
                       <td style={{ padding: '12px 16px', fontWeight: 500 }}>{log.usuario}</td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span style={{ color: log.accion.includes('Eliminó') || log.accion.includes('papelera') ? '#f87171' : log.accion.includes('Subió') ? '#34d399' : 'var(--text-secondary)' }}>
-                          {log.accion}
-                        </span>
-                      </td>
+                      <td style={{ padding: '12px 16px' }}>{log.accion}</td>
                       <td style={{ padding: '12px 16px', color: '#4f8cff' }}>{log.documento}</td>
                     </tr>
                   ))}
@@ -702,7 +773,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === TAB PANEL DE CONFIGURACIÓN OPERATIVO === */}
+        {/* === CONFIGURACIÓN AVANZADA DE DATOS DEL PERFIL === */}
         {vistaActual === 'configuracion' && (
           <div className="panel">
             <div className="panel-header">
@@ -721,7 +792,12 @@ export default function App() {
                   <label>Nombre Institucional Visible</label>
                   <div className="input-wrapper">
                     <User size={18} />
-                    <input type="text" value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} required />
+                    <input
+                      type="text"
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      required
+                    />
                   </div>
                 </div>
 
@@ -729,24 +805,41 @@ export default function App() {
                   <label>Correo Electrónico de Contacto</label>
                   <div className="input-wrapper">
                     <Mail size={18} />
-                    <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required />
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      required
+                    />
                   </div>
                 </div>
 
                 <div className="input-group">
-                  <label>Nueva Contraseña <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Dejar en blanco para no modificar)</span></label>
+                  <label>Nueva Contraseña <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Dejar en blanco para conservar la actual)</span></label>
                   <div className="input-wrapper">
                     <Lock size={18} />
-                    <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="••••••••" />
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="••••••••"
+                    />
                   </div>
                 </div>
 
+                {/* Validador de contraseña actual para cambios de alta seguridad en Firebase */}
                 {(newEmail !== (auth.currentUser?.email || '') || newPassword.length > 0) && (
                   <div className="input-group">
                     <label>Contraseña Actual <span style={{ color: 'var(--accent-amber)', fontWeight: 400 }}>(Requerida para confirmar cambios críticos)</span></label>
                     <div className="input-wrapper">
                       <Lock size={18} />
-                      <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Confirma tu clave actual" required />
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Confirma tu contraseña actual"
+                        required
+                      />
                     </div>
                   </div>
                 )}
@@ -759,16 +852,20 @@ export default function App() {
       </main>
 
       {/* GITHUB ACTIONS WIDGET */}
-      <div onClick={checkGithub} className={`github-widget ${status?.connected ? 'connected' : 'disconnected'}`}>
+      <div
+        onClick={loading ? undefined : checkGithub}
+        className={`github-widget ${status?.connected ? 'connected' : 'disconnected'}`}
+      >
         <Server size={20} color={status?.connected ? '#34d399' : '#f87171'} />
         <div>
           <div className="github-label">GitHub Actions</div>
           <div className={`github-status ${status?.connected ? 'ok' : 'fail'}`}>
-            {status?.connected ? 'Conectado' : 'Desconectado'}
-            {status?.connected && <CheckCircle size={13} />}
+            {loading ? 'Consultando...' : status?.connected ? 'Conectado' : 'Desconectado'}
+            {status?.connected && !loading && <CheckCircle size={13} />}
+            {!status?.connected && !loading && <XCircle size={13} />}
           </div>
         </div>
-        <RefreshCcw size={14} color="var(--text-muted)" style={{ marginLeft: 8 }} />
+        <RefreshCcw size={14} color="var(--text-muted)" className={loading ? 'spin-icon' : ''} style={{ marginLeft: 8 }} />
       </div>
     </div>
   );
