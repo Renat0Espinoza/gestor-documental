@@ -34,14 +34,15 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       if (vista === 'register') {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
-        // Se actualiza el perfil antes de avanzar para evitar recargas
+        // Se actualiza el perfil antes de avanzar para evitar recargas en la vista principal
         await updateProfile(userCredential.user, { displayName: nombre });
         await userCredential.user.reload();
 
+        // Guardamos los datos en Firestore con rol predeterminado
         await setDoc(doc(db, "users", userCredential.user.uid), {
           nombre: nombre,
           correo: email,
-          rol: 'lector' // Rango por defecto
+          rol: 'lector'
         });
 
         setSuccess('¡Registro exitoso!');
