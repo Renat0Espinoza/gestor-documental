@@ -28,46 +28,37 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setSuccess('');
     setLoading(true);
 
     try {
       if (vista === 'register') {
-        // 1. Crear el usuario en Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
-        // 2. Actualizar el perfil inmediatamente en Auth para que el estado tenga el nombre disponible
-        await updateProfile(userCredential.user, {
-          displayName: nombre
-        });
+        // Se actualiza el perfil antes de avanzar para evitar recargas
+        await updateProfile(userCredential.user, { displayName: nombre });
+        await userCredential.user.reload();
 
-        // 3. Guardar en la base de datos de Firestore con el rol por defecto
-        await setDoc(doc(db, 'usuarios', userCredential.user.uid), {
-          uid: userCredential.user.uid,
+        await setDoc(doc(db, "users", userCredential.user.uid), {
           nombre: nombre,
-          email: email,
-          rol: 'colaborador'
+          correo: email,
+          rol: 'lector' // Rango por defecto
         });
 
-        setSuccess('Cuenta creada con éxito. Iniciando sesión...');
-        setTimeout(() => {
-          onLoginSuccess();
-        }, 1500);
-
-      } else if (vista === 'login') {
+        setSuccess('¡Registro exitoso!');
+        onLoginSuccess();
+      } else {
         await signInWithEmailAndPassword(auth, email, password);
         onLoginSuccess();
       }
     } catch (err: any) {
-      console.error(err);
       if (err.code === 'auth/email-already-in-use') {
-        setError('El correo electrónico ya está en uso.');
+        setError('Este correo electrónico ya está registrado.');
       } else if (err.code === 'auth/weak-password') {
         setError('La contraseña debe tener al menos 6 caracteres.');
-      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-        setError('Credenciales incorrectas. Inténtalo de nuevo.');
+      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        setError('Correo o contraseña incorrectos.');
       } else {
-        setError('Ocurrió un error inesperado. Inténtalo más tarde.');
+        setError('Ocurrió un error inesperado. Inténtalo de nuevo.');
       }
     } finally {
       setLoading(false);
@@ -76,62 +67,52 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    setSuccess('');
     if (!email) {
       setError('Por favor, ingresa tu correo electrónico.');
       return;
     }
-    setError('');
-    setSuccess('');
     setSendingReset(true);
     try {
       await sendPasswordResetEmail(auth, email);
-      setSuccess('Se ha enviado un correo para restablecer tu contraseña.');
+      setSuccess('Se ha enviado un enlace de restablecimiento a tu correo.');
     } catch (err: any) {
-      if (err.code === 'auth/user-not-found') {
-        setError('No existe ningún usuario con este correo.');
-      } else {
-        setError('Error al enviar el correo de recuperación.');
-      }
+      setError('No se pudo enviar el correo. Verifica que esté bien escrito.');
     } finally {
       setSendingReset(false);
     }
   };
 
   const cambiarVista = (nuevaVista: Vista) => {
+    setVista(nuevaVista);
     setError('');
     setSuccess('');
-    setVista(nuevaVista);
   };
 
   if (vista === 'forgot') {
     return (
       <div className="login-container">
         <div className="login-card">
-          <button type="button" onClick={() => cambiarVista('login')} className="btn-back-login">
+          <button type="button" onClick={() => cambiarVista('login')} className="btn-back" style={{ marginBottom: '20px', background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
             <ArrowLeft size={16} /> Volver al inicio
           </button>
           <h2>Recuperar Contraseña</h2>
-          <p className="login-subtitle">Ingresa tu correo para enviarte un enlace de restablecimiento.</p>
-
-          {error && <div className="alert alert-error">{error}</div>}
-          {success && <div className="alert alert-success">{success}</div>}
-
-          <form onSubmit={handleForgotPassword}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+            Ingresa tu correo institucional para enviarte un enlace de recuperación.
+          </p>
+          {error && <div className="login-error" style={{ color: '#f87171', background: 'rgba(248, 113, 113, 0.1)', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>{error}</div>}
+          {success && <div className="login-success" style={{ color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>{success}</div>}
+          <form onSubmit={handleForgotPassword} className="login-form">
             <div className="input-group">
               <label>Correo Electrónico</label>
               <div className="input-wrapper">
                 <Mail size={18} />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="ejemplo@correo.com"
-                  required
-                />
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ejemplo@ubiobio.cl" required />
               </div>
             </div>
             <button type="submit" className="btn-primary" disabled={sendingReset}>
-              {sendingReset ? <Loader2 className="spin-icon" size={20} /> : 'Enviar Enlace'}
+              {sendingReset ? 'Enviando...' : 'Enviar enlace'}
             </button>
           </form>
         </div>
@@ -142,27 +123,21 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   return (
     <div className="login-container">
       <div className="login-card">
-        <h2>{vista === 'register' ? 'Crear Cuenta' : 'Iniciar Sesión'}</h2>
-        <p className="login-subtitle">
-          {vista === 'register' ? 'Regístrate para acceder al sistema' : 'Ingresa tus credenciales para continuar'}
-        </p>
+        <div className="login-header">
+          <h2>{vista === 'register' ? 'Crear Cuenta' : 'Iniciar Sesión'}</h2>
+          <p>{vista === 'register' ? 'Regístrate en el Gestor Documental UBB' : 'Ingresa tus credenciales para continuar'}</p>
+        </div>
 
-        {error && <div className="alert alert-error">{error}</div>}
-        {success && <div className="alert alert-success">{success}</div>}
+        {error && <div className="login-error" style={{ color: '#f87171', background: 'rgba(248, 113, 113, 0.1)', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>{error}</div>}
+        {success && <div className="login-success" style={{ color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>{success}</div>}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="login-form">
           {vista === 'register' && (
             <div className="input-group">
               <label>Nombre Completo</label>
               <div className="input-wrapper">
                 <User size={18} />
-                <input
-                  type="text"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Juan Pérez"
-                  required
-                />
+                <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Juan Pérez" required />
               </div>
             </div>
           )}
@@ -171,13 +146,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <label>Correo Electrónico</label>
             <div className="input-wrapper">
               <Mail size={18} />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="ejemplo@correo.com"
-                required
-              />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ejemplo@ubiobio.cl" required />
             </div>
           </div>
 
@@ -185,24 +154,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <label>Contraseña</label>
             <div className="input-wrapper">
               <Lock size={18} />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-              />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
             </div>
           </div>
 
           {vista === 'login' && (
-            <div style={{ textAlign: 'right', marginTop: '-8px' }}>
-              <button
-                type="button"
-                onClick={() => cambiarVista('forgot')}
-                className="btn-link"
-                style={{ fontSize: '13px' }}
-              >
+            <div style={{ textAlign: 'right', marginTop: '-8px', marginBottom: '15px' }}>
+              <button type="button" onClick={() => cambiarVista('forgot')} className="btn-link" style={{ background: 'transparent', border: 'none', color: 'var(--accent-blue)', cursor: 'pointer', fontSize: '13px' }}>
                 ¿Olvidaste tu contraseña?
               </button>
             </div>
@@ -214,11 +172,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         </form>
 
         <div style={{ textAlign: 'center', marginTop: '20px' }}>
-          <button
-            type="button"
-            onClick={() => cambiarVista(vista === 'register' ? 'login' : 'register')}
-            className="btn-link"
-          >
+          <button type="button" onClick={() => cambiarVista(vista === 'register' ? 'login' : 'register')} className="btn-link" style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
             {vista === 'register' ? '¿Ya tienes cuenta? Inicia sesión aquí' : '¿No tienes cuenta? Regístrate aquí'}
           </button>
         </div>
