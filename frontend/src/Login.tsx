@@ -6,8 +6,8 @@ import {
   sendPasswordResetEmail,
   updateProfile
 } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore'; // Inyectado para roles
-import { auth, db } from './firebase'; // Inyectado 'db'
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
 
 interface LoginProps {
   onLoginSuccess: () => void;
@@ -23,7 +23,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [success, setSuccess] = useState('');
   const [vista, setVista] = useState<Vista>('login');
   const [sendingReset, setSendingReset] = useState(false);
-  const [loading, setLoading] = useState(false); // Estado para el botón principal
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,64 +32,56 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
     try {
       if (vista === 'register') {
-        // 1. Crear el usuario en Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
-        // 2. Actualizar su nombre en el perfil
-        await updateProfile(userCredential.user, { displayName: nombre.trim() });
+        // Actualizamos el perfil en Auth de forma inmediata
+        await updateProfile(userCredential.user, { displayName: nombre });
 
-        // 3. INYECCIÓN DE LÓGICA: Guardar en Firestore con el rol "lector"
+        // Forzamos la recarga del usuario para sincronizar el estado sin retrasos
+        await userCredential.user.reload();
+
+        // Guardamos los datos iniciales del usuario con rol 'lector' por defecto en Firestore
         await setDoc(doc(db, 'users', userCredential.user.uid), {
-          nombre: nombre.trim(),
+          nombre: nombre,
           correo: email,
-          rol: 'lector', // Rol inicial según lo solicitado
-          estado: 'Activo',
-          fechaCreacion: new Date().toISOString()
+          rol: 'lector'
         });
 
+        setSuccess('¡Registro exitoso!');
         onLoginSuccess();
       } else {
-        // Login normal
         await signInWithEmailAndPassword(auth, email, password);
         onLoginSuccess();
       }
     } catch (err: any) {
-      if (err.code === 'auth/invalid-credential') {
-        setError('Correo o contraseña incorrectos');
-      } else if (err.code === 'auth/email-already-in-use') {
-        setError('Este correo ya está registrado');
+      if (err.code === 'auth/email-already-in-use') {
+        setError('Este correo electrónico ya está registrado.');
       } else if (err.code === 'auth/weak-password') {
-        setError('La contraseña debe tener al menos 6 caracteres');
+        setError('La contraseña debe tener al menos 6 caracteres.');
+      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        setError('Correo o contraseña incorrectos.');
       } else {
-        setError('Ocurrió un error. Inténtalo de nuevo.');
+        setError('Ocurrió un error inesperado. Inténtalo de nuevo.');
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePasswordReset = async (e: React.FormEvent) => {
+  const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
-
-    if (!email.trim()) {
+    if (!email) {
       setError('Por favor, ingresa tu correo electrónico.');
       return;
     }
-
     setSendingReset(true);
     try {
       await sendPasswordResetEmail(auth, email);
-      setSuccess('📧 Se ha enviado un enlace de recuperación a tu correo electrónico.');
+      setSuccess('Se ha enviado un enlace de restablecimiento a tu correo.');
     } catch (err: any) {
-      if (err.code === 'auth/user-not-found') {
-        setError('No existe una cuenta con este correo electrónico.');
-      } else if (err.code === 'auth/invalid-email') {
-        setError('El correo electrónico ingresado no es válido.');
-      } else {
-        setError('Ocurrió un error al enviar el correo. Inténtalo de nuevo.');
-      }
+      setError('No se pudo enviar el correo. Verifica que esté bien escrito.');
     } finally {
       setSendingReset(false);
     }
@@ -101,62 +93,43 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setSuccess('');
   };
 
-  // --- VISTA DE RECUPERAR CONTRASEÑA ---
   if (vista === 'forgot') {
     return (
-      <div className="login-page">
+      <div className="login-container">
         <div className="login-card">
+          <button type="button" onClick={() => cambiarVista('login')} className="btn-back" style={{ marginBottom: '20px' }}>
+            <ArrowLeft size={16} /> Volver al inicio
+          </button>
           <h2>Recuperar Contraseña</h2>
-          <p className="subtitle">
-            Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+            Ingresa tu correo institucional para enviarte un enlace de recuperación.
           </p>
-
           {error && <div className="login-error">{error}</div>}
           {success && <div className="login-success">{success}</div>}
-
-          <form onSubmit={handlePasswordReset} className="login-form">
+          <form onSubmit={handleForgotPassword} className="login-form">
             <div className="input-group">
               <label>Correo Electrónico</label>
               <div className="input-wrapper">
                 <Mail size={18} />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="ejemplo@ubiobio.cl"
-                  required
-                />
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ejemplo@ubiobio.cl" required />
               </div>
             </div>
-
             <button type="submit" className="btn-primary" disabled={sendingReset}>
-              {sendingReset ? <Loader2 className="spin-icon" size={20} /> : 'Enviar enlace de recuperación'}
+              {sendingReset ? 'Enviando...' : 'Enviar enlace'}
             </button>
           </form>
-
-          <div style={{ textAlign: 'center', marginTop: '20px' }}>
-            <button
-              type="button"
-              onClick={() => cambiarVista('login')}
-              className="btn-link"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-            >
-              <ArrowLeft size={14} /> Volver a Iniciar Sesión
-            </button>
-          </div>
         </div>
       </div>
     );
   }
 
-  // --- VISTA DE LOGIN / REGISTRO ---
   return (
-    <div className="login-page">
+    <div className="login-container">
       <div className="login-card">
-        <h2>Sistema de Gestión</h2>
-        <p className="subtitle">
-          {vista === 'register' ? 'Crea una cuenta nueva' : 'Ingresa tus credenciales para continuar'}
-        </p>
+        <div className="login-header">
+          <h2>{vista === 'register' ? 'Crear Cuenta' : 'Iniciar Sesión'}</h2>
+          <p>{vista === 'register' ? 'Regístrate en el Gestor Documental UBB' : 'Ingresa tus credenciales para continuar'}</p>
+        </div>
 
         {error && <div className="login-error">{error}</div>}
         {success && <div className="login-success">{success}</div>}
@@ -164,16 +137,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         <form onSubmit={handleSubmit} className="login-form">
           {vista === 'register' && (
             <div className="input-group">
-              <label>Nombre de Usuario</label>
+              <label>Nombre Completo</label>
               <div className="input-wrapper">
                 <User size={18} />
-                <input
-                  type="text"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Tu nombre"
-                  required
-                />
+                <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Juan Pérez" required />
               </div>
             </div>
           )}
@@ -182,13 +149,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <label>Correo Electrónico</label>
             <div className="input-wrapper">
               <Mail size={18} />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="ejemplo@ubiobio.cl"
-                required
-              />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ejemplo@ubiobio.cl" required />
             </div>
           </div>
 
@@ -196,24 +157,13 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <label>Contraseña</label>
             <div className="input-wrapper">
               <Lock size={18} />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-              />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
             </div>
           </div>
 
           {vista === 'login' && (
             <div style={{ textAlign: 'right', marginTop: '-8px' }}>
-              <button
-                type="button"
-                onClick={() => cambiarVista('forgot')}
-                className="btn-link"
-                style={{ fontSize: '13px' }}
-              >
+              <button type="button" onClick={() => cambiarVista('forgot')} className="btn-link" style={{ fontSize: '13px' }}>
                 ¿Olvidaste tu contraseña?
               </button>
             </div>
@@ -225,11 +175,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         </form>
 
         <div style={{ textAlign: 'center', marginTop: '20px' }}>
-          <button
-            type="button"
-            onClick={() => cambiarVista(vista === 'register' ? 'login' : 'register')}
-            className="btn-link"
-          >
+          <button type="button" onClick={() => cambiarVista(vista === 'register' ? 'login' : 'register')} className="btn-link">
             {vista === 'register' ? '¿Ya tienes cuenta? Inicia sesión aquí' : '¿No tienes cuenta? Regístrate aquí'}
           </button>
         </div>
