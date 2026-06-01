@@ -96,11 +96,17 @@ function App() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryColor, setNewCategoryColor] = useState('#4f8cff');
   const [documentsMeta, setDocumentsMeta] = useState<DocMeta[]>([]);
-  const [selectedUploadCategory, setSelectedUploadCategory] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
 
   // --- Estado de historial de búsqueda ---
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+
+  // --- Estado del modal de subida ---
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFileName, setUploadFileName] = useState('');
+  const [uploadCategory, setUploadCategory] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -264,12 +270,13 @@ function App() {
   // --- SUBIDA DE ARCHIVOS ---
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     if (file.type !== 'application/pdf') {
       alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
@@ -279,23 +286,51 @@ function App() {
       return;
     }
 
+    setUploadFile(file);
+    // Nombre por defecto: nombre del archivo sin extensión ni timestamp
+    const baseName = file.name.replace(/\.pdf$/i, '');
+    setUploadFileName(baseName);
+  };
+
+  const abrirModalSubida = () => {
+    setUploadFile(null);
+    setUploadFileName('');
+    setUploadCategory('');
+    setUploading(false);
+    setShowUploadModal(true);
+  };
+
+  const cerrarModalSubida = () => {
+    setShowUploadModal(false);
+    setUploadFile(null);
+    setUploadFileName('');
+    setUploadCategory('');
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleConfirmUpload = async () => {
+    if (!uploadFile || !uploadFileName.trim()) return;
+    setUploading(true);
+
     const formData = new FormData();
-    formData.append('documento', file);
+    // Crear un nuevo File con el nombre personalizado
+    const customFile = new File([uploadFile], `${uploadFileName.trim()}.pdf`, { type: uploadFile.type });
+    formData.append('documento', customFile);
 
     try {
       const response = await axios.post(`${API_BASE}/api/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      const uploadedFilename = response.data.file || file.name;
-      alert(`✅ ¡Subida exitosa!\nArchivo: ${uploadedFilename}`);
-      registrarAuditoria('Subió el archivo', uploadedFilename); // <-- Registro de subida
+      const uploadedFilename = response.data.file || customFile.name;
+      registrarAuditoria('Subió el archivo', uploadedFilename);
 
       // Guardar metadata del documento con categoría
-      if (selectedUploadCategory && auth.currentUser) {
+      if (uploadCategory && auth.currentUser) {
         try {
           await addDoc(collection(db, 'documents'), {
             filename: uploadedFilename,
-            category: selectedUploadCategory,
+            category: uploadCategory,
             uploadedBy: auth.currentUser.uid,
             uploadedAt: new Date().toISOString()
           });
@@ -304,15 +339,16 @@ function App() {
           console.error('Error al guardar metadata:', err);
         }
       }
-      setSelectedUploadCategory('');
+
+      alert(`✅ ¡Subida exitosa!\nArchivo: ${uploadedFilename}`);
+      cerrarModalSubida();
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 413) {
         alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
       } else {
         alert('❌ Hubo un error al intentar subir el archivo al servidor.');
       }
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setUploading(false);
     }
   };
 
@@ -728,7 +764,7 @@ function App() {
 
       <main className="app-main">
         {/* HIDDEN FILE INPUT */}
-        <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+        <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileSelect} />
 
         {/* === DASHBOARD === */}
         {vistaActual === 'dashboard' && (
@@ -756,7 +792,7 @@ function App() {
 
               {/* HU3: Ocultar Tarjeta Subir para Lectores */}
               {userRole !== 'lector' && (
-                <button className="action-card" onClick={() => fileInputRef.current?.click()}>
+                <button className="action-card" onClick={abrirModalSubida}>
                   <div className="card-icon blue">
                     <UploadCloud size={26} color="#4f8cff" />
                   </div>
@@ -830,28 +866,7 @@ function App() {
               )}
             </div>
 
-            {/* Selector de categoría para la subida - visible cuando hay categorías */}
-            {userRole !== 'lector' && categories.length > 0 && (
-              <div style={{ marginTop: '24px', padding: '16px 20px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <Tag size={16} />
-                  <span style={{ fontWeight: 600 }}>Categoría para próxima subida:</span>
-                  <select
-                    value={selectedUploadCategory}
-                    onChange={(e) => setSelectedUploadCategory(e.target.value)}
-                    style={{
-                      background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)',
-                      padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px'
-                    }}
-                  >
-                    <option value="">Sin categoría</option>
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
+
           </>
         )}
 
@@ -1409,6 +1424,131 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* === MODAL DE SUBIDA === */}
+      {showUploadModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 200
+        }} onClick={cerrarModalSubida}>
+          <div style={{
+            background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 'var(--radius-xl)',
+            padding: '36px 32px', width: '100%', maxWidth: '480px', boxShadow: 'var(--shadow-lg)',
+            animation: 'fadeIn 0.3s ease'
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)' }}>Subir Documento</h2>
+              <button onClick={cerrarModalSubida} style={{
+                background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer', color: 'var(--text-muted)', padding: '6px', display: 'flex', transition: 'all 0.15s ease'
+              }}><X size={18} /></button>
+            </div>
+
+            {/* Selector de archivo */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>
+                Archivo PDF
+              </label>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  border: `2px dashed ${uploadFile ? 'rgba(52,211,153,0.4)' : 'var(--border-subtle)'}`,
+                  borderRadius: 'var(--radius-sm)', padding: '24px', textAlign: 'center', cursor: 'pointer',
+                  background: uploadFile ? 'rgba(52,211,153,0.05)' : 'var(--bg-input)',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {uploadFile ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                    <FileText size={20} color="#34d399" />
+                    <span style={{ color: 'var(--accent-green)', fontSize: '14px', fontWeight: 500 }}>{uploadFile.name}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>({formatFileSize(uploadFile.size)})</span>
+                  </div>
+                ) : (
+                  <div>
+                    <UploadCloud size={32} color="var(--text-muted)" style={{ marginBottom: '8px' }} />
+                    <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '14px' }}>Haz clic para seleccionar un archivo PDF</p>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '12px' }}>Máximo 10 MB</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Nombre personalizado */}
+            <div className="input-group" style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>
+                Nombre del documento
+              </label>
+              <div className="input-wrapper">
+                <FileText size={18} />
+                <input
+                  type="text"
+                  value={uploadFileName}
+                  onChange={(e) => setUploadFileName(e.target.value)}
+                  placeholder="Nombre del archivo..."
+                />
+              </div>
+            </div>
+
+            {/* Categoría */}
+            {categories.length > 0 && (
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>
+                  Categoría <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(opcional)</span>
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  <button
+                    onClick={() => setUploadCategory('')}
+                    style={{
+                      padding: '6px 14px', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '13px',
+                      fontFamily: 'inherit', transition: 'all 0.15s ease',
+                      background: !uploadCategory ? 'rgba(79,140,255,0.15)' : 'var(--bg-input)',
+                      border: `1px solid ${!uploadCategory ? 'rgba(79,140,255,0.3)' : 'var(--border-subtle)'}`,
+                      color: !uploadCategory ? '#4f8cff' : 'var(--text-secondary)'
+                    }}
+                  >Sin categoría</button>
+                  {categories.map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setUploadCategory(cat.id)}
+                      style={{
+                        padding: '6px 14px', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '13px',
+                        fontFamily: 'inherit', transition: 'all 0.15s ease',
+                        background: uploadCategory === cat.id ? `${cat.color}20` : 'var(--bg-input)',
+                        border: `1px solid ${uploadCategory === cat.id ? `${cat.color}50` : 'var(--border-subtle)'}`,
+                        color: uploadCategory === cat.id ? cat.color : 'var(--text-secondary)'
+                      }}
+                    >{cat.nombre}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Botones */}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button onClick={cerrarModalSubida} style={{
+                background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)',
+                padding: '12px 24px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: '14px',
+                fontWeight: 500, fontFamily: 'inherit', transition: 'all 0.15s ease'
+              }}>Cancelar</button>
+              <button
+                onClick={handleConfirmUpload}
+                disabled={!uploadFile || !uploadFileName.trim() || uploading}
+                style={{
+                  background: (!uploadFile || !uploadFileName.trim() || uploading) ? 'rgba(79,140,255,0.3)' : 'var(--gradient-main)',
+                  backgroundSize: '200% auto', color: 'white', border: 'none',
+                  padding: '12px 24px', borderRadius: 'var(--radius-sm)', cursor: (!uploadFile || !uploadFileName.trim() || uploading) ? 'not-allowed' : 'pointer',
+                  fontSize: '14px', fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.25s ease',
+                  display: 'flex', alignItems: 'center', gap: '8px', opacity: (!uploadFile || !uploadFileName.trim() || uploading) ? 0.6 : 1
+                }}
+              >
+                {uploading ? <RefreshCcw size={16} className="spin-icon" /> : <UploadCloud size={16} />}
+                {uploading ? 'Subiendo...' : 'Subir Documento'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* GITHUB ACTIONS WIDGET */}
       <div

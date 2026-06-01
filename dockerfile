@@ -23,9 +23,10 @@ COPY backend/ ./backend/
 # Esto lo pone en una carpeta que Express pueda servir
 COPY --from=frontend-builder /app/frontend/dist ./backend/public
 
-# Directorio persistente para documentos subidos
-RUN mkdir -p /app/backend/uploads
+# Directorio persistente para documentos subidos y papelera
+RUN mkdir -p /app/backend/uploads /app/backend/trash
 VOLUME /app/backend/uploads
+VOLUME /app/backend/trash
 
 # Exponemos el puerto interno del servidor Node
 EXPOSE 3000

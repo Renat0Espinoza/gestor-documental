@@ -148,7 +148,8 @@ app.post('/api/files/:filename/trash', (req, res) => {
 
     try {
         const trashPath = path.join(trashDir, req.params.filename);
-        fs.renameSync(filePath, trashPath);
+        fs.copyFileSync(filePath, trashPath);
+        fs.unlinkSync(filePath);
         console.log('🗑️ Archivo movido a papelera:', req.params.filename);
         res.json({ success: true, message: 'Archivo movido a la papelera' });
     } catch (err) {
@@ -192,7 +193,8 @@ app.post('/api/trash/:filename/restore', (req, res) => {
 
     try {
         const filePath = path.join(uploadsDir, req.params.filename);
-        fs.renameSync(trashPath, filePath);
+        fs.copyFileSync(trashPath, filePath);
+        fs.unlinkSync(trashPath);
         console.log('♻️ Archivo restaurado:', req.params.filename);
         res.json({ success: true, message: 'Archivo restaurado correctamente' });
     } catch (err) {
