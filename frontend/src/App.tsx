@@ -3,8 +3,8 @@ import axios from 'axios';
 import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
-  ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
-  Filter, Users, History, Shield, Eye
+  FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
+  Users, History, Shield
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase';
@@ -102,7 +102,6 @@ export default function App() {
         if (docSnap.exists()) {
           setUsuarioActual(docSnap.data() as UsuarioDB);
         } else {
-          // Fallback por si se creó directo en Auth
           const userObj: UsuarioDB = {
             uid: currentUser.uid,
             nombre: currentUser.displayName || 'Usuario',
@@ -178,7 +177,6 @@ export default function App() {
     querySnap.forEach((d) => {
       dbLogs.push({ id: d.id, ...d.data() } as LogAuditoria);
     });
-    // Ordenar por fecha descendente
     dbLogs.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
     setHistorialLogs(dbLogs);
   };
@@ -204,7 +202,7 @@ export default function App() {
       }
     } catch (error) {
       setStatus({ connected: false });
-    } finally {
+    } Platform: {
       setLoading(false);
     }
   };
@@ -223,7 +221,6 @@ export default function App() {
     };
 
     try {
-      // Guardar metadatos en Firestore
       await addDoc(collection(db, 'archivos'), nuevoArchivo);
       await registrarLog("Subió un archivo", file.name);
       cargarDatosFirestore();
@@ -234,7 +231,6 @@ export default function App() {
     }
   };
 
-  // Mover a la papelera en lugar de eliminar por completo
   const handleMoverAPapelera = async (id: string, name: string) => {
     try {
       const docRef = doc(db, 'archivos', id);
@@ -246,7 +242,6 @@ export default function App() {
     }
   };
 
-  // Restaurar desde la papelera
   const handleRestaurarArchivo = async (id: string, name: string) => {
     try {
       const docRef = doc(db, 'archivos', id);
@@ -258,7 +253,6 @@ export default function App() {
     }
   };
 
-  // Eliminación definitiva de Firestore
   const handleEliminarDefinitivo = async (id: string, name: string) => {
     if (window.confirm(`¿Estás completamente seguro de eliminar "${name}" permanentemente? Esta acción no se puede deshacer.`)) {
       try {
@@ -298,36 +292,31 @@ export default function App() {
     }
   };
 
-  // Actualizar Configuraciones del perfil
   const handleActualizarPerfil = async (e: React.FormEvent) => {
     e.preventDefault();
     setPerfilError('');
     setPerfilSuccess('');
 
     try {
-      // Si va a cambiar correo o contraseña requiere autenticarse de nuevo obligatoriamente
       if (newEmail !== user.email || newPassword) {
         if (!currentPassword) {
           setPerfilError("Se requiere ingresar la contraseña actual para realizar cambios sensibles de seguridad.");
           return;
         }
         const credential = EmailAuthProvider.credential(user.email, currentPassword);
-        await reauthenticateWithCredential(auth, credential);
+        await reauthenticateWithCredential(auth.currentUser!, credential);
       }
 
-      // 1. Cambiar Nombre de Perfil
       if (newName !== user.displayName) {
         await updateProfile(auth.currentUser!, { displayName: newName });
         await updateDoc(doc(db, 'usuarios', user.uid), { nombre: newName });
       }
 
-      // 2. Cambiar Email
       if (newEmail !== user.email) {
         await updateEmail(auth.currentUser!, newEmail);
         await updateDoc(doc(db, 'usuarios', user.uid), { email: newEmail });
       }
 
-      // 3. Cambiar Contraseña
       if (newPassword) {
         await updatePassword(auth.currentUser!, newPassword);
       }
@@ -335,8 +324,6 @@ export default function App() {
       setPerfilSuccess("Datos de perfil y credenciales guardados de forma segura.");
       setCurrentPassword('');
       setNewPassword('');
-
-      // Actualizar estado local
       setUsuarioActual(prev => prev ? { ...prev, nombre: newName, email: newEmail } : null);
 
     } catch (err: any) {
@@ -349,7 +336,6 @@ export default function App() {
     signOut(auth);
   };
 
-  // Filtrado de búsquedas y visualizaciones
   const archivosActivos = files.filter(f => f.estado !== 'eliminado');
   const archivosEliminados = files.filter(f => f.estado === 'eliminado');
 
@@ -463,7 +449,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SECCIÓN DE SUBIDA INTEGRADA POR CATEGORÍAS */}
             <div className="dashboard-actions" style={{ marginTop: 24, padding: 24, background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-card)' }}>
               <h3>Subir Nuevo Documento</h3>
               <p style={{ color: 'var(--text-secondary)', marginBottom: 16 }}>Asigna una categoría al documento antes de guardarlo de forma centralizada.</p>
@@ -496,7 +481,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* GESTIÓN DE CATEGORÍAS PARA ADMINISTRADORES */}
             {usuarioActual?.rol === 'admin' && (
               <div style={{ marginTop: 24, padding: 24, background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-card)' }}>
                 <h3>Crear Nuevas Categorías (Panel Admin)</h3>
@@ -591,7 +575,6 @@ export default function App() {
               <p>Utiliza filtros detallados de extensión, peso y clasificación para localizar documentos.</p>
             </div>
 
-            {/* PANEL DE FILTROS AVANZADOS */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, padding: 20, background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-card)', marginBottom: 20 }}>
               <div className="input-group" style={{ margin: 0 }}>
                 <label>Nombre del Documento</label>
@@ -642,7 +625,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* TABLA DE RESULTADOS */}
             <div className="table-container">
               <table className="files-table">
                 <thead>
@@ -732,7 +714,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VISTA: CONFIGURACIÓN / AJUSTES DE PERFIL */}
+        {/* VISTA: CONFIGURACIÓN */}
         {vista === 'configuracion' && (
           <div>
             <div className="view-header">
@@ -786,7 +768,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Confirmación obligatoria con contraseña actual para cambios de Email/Pass */}
                 {(newEmail !== user.email || newPassword) && (
                   <div className="input-group" style={{ borderTop: '1px solid var(--border-card)', paddingTop: '16px', marginTop: '16px' }}>
                     <label style={{ color: 'var(--accent-amber)' }}>Contraseña Actual Requerida</label>
@@ -853,7 +834,7 @@ export default function App() {
                           <option value="admin">Administrador</option>
                         </select>
                         {u.uid === usuarioActual?.uid && (
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)', block显示: 'block', marginTop: 4 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
                             (Tú mismo - Bloqueado)
                           </span>
                         )}
@@ -908,7 +889,7 @@ export default function App() {
         )}
       </main>
 
-      {/* COMPONENTE INTERNO DEL WIDGET GITHUB */}
+      {/* GITHUB WIDGET */}
       <div
         onClick={loading ? undefined : checkGithub}
         className={`github-widget ${status?.connected ? 'connected' : 'disconnected'}`}
@@ -916,8 +897,10 @@ export default function App() {
         <Server size={20} color={status?.connected ? '#34d399' : '#f87171'} />
         <div>
           <div className="github-label">GitHub Actions</div>
-          <div className={`github-status ${status?.connected ? 'ok' : 'fail'}`}>\
+          <div className={`github-status ${status?.connected ? 'ok' : 'fail'}`}>
             {loading ? 'Consultando...' : status?.connected ? 'Conectado' : 'Desconectado'}
+            {status?.connected && !loading && <CheckCircle size={13} />}
+            {!status?.connected && !loading && <XCircle size={13} />}
           </div>
         </div>
         <RefreshCcw size={14} color="var(--text-muted)" className={loading ? 'spin-icon' : ''} style={{ marginLeft: 8 }} />
