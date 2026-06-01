@@ -38,6 +38,14 @@ interface SearchHistoryItem {
   timestamp: string;
 }
 
+interface HistoryLog {
+  id: string;
+  usuario: string;
+  accion: string;
+  documento: string;
+  fecha: string;
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -74,9 +82,13 @@ function App() {
   const [filterDate, setFilterDate] = useState('all');
   const [sortBy, setSortBy] = useState('name-asc');
   const [usersList, setUsersList] = useState<any[]>([]);
-  const [historyLogs, setHistoryLogs] = useState<any[]>([
-    { id: 1, usuario: 'Sistema', accion: 'Auditoría inicializada', documento: 'N/A', fecha: new Date().toISOString() }
-  ]);
+  const [historyLogs, setHistoryLogs] = useState<HistoryLog[]>([]);
+  const [toast, setToast] = useState<{message: string, type: 'success'|'error'|'info'} | null>(null);
+
+  const showToast = (message: string, type: 'success'|'error'|'info' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   // --- Estado de perfil ---
   const [displayName, setDisplayName] = useState('');
@@ -111,6 +123,36 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setIsAuthenticated(true);
+        if (!displayName && user.displayName) setDisplayName(user.displayName);
+        // Cargar rol y sync desde Firestore
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          setUserRole(userDoc.data().rol || 'lector');
+          if (userDoc.data().nombre && !displayName) {
+            setDisplayName(userDoc.data().nombre);
+          }
+        }
+        setUserCreationDate(user.metadata.creationTime ? new Date(user.metadata.creationTime).toLocaleDateString('es-CL') : 'Desconocida');
+        cargarHistorialBusqueda();
+        cargarDocumentosMeta();
+        cargarCategorias();
+        cargarAuditoria();
+      } else {
+        setIsAuthenticated(false);
+        setDisplayName('');
+        setUserRole('lector');
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) checkGithub();
+  }, [isAuthenticated]);
+
   const API_BASE = '';
 
   const CATEGORY_COLORS = [
@@ -129,38 +171,6 @@ function App() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (isAuthenticated) checkGithub();
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    // <-- Modificado a función asíncrona para obtener el rol de Firestore
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setDisplayName(user.displayName || '');
-        setIsAuthenticated(true);
-
-        try {
-          const docRef = doc(db, "users", user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists() && docSnap.data().rol) {
-            setUserRole(docSnap.data().rol);
-          } else {
-            setUserRole('lector'); // Por defecto para evitar problemas
-          }
-          // Obtener fecha de creación
-          if (docSnap.exists() && docSnap.data().fechaCreacion) {
-            setUserCreationDate(docSnap.data().fechaCreacion);
-          }
-        } catch (error) {
-          console.error("Error al obtener rol:", error);
-          setUserRole('lector');
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   // --- CARGAR CATEGORÍAS ---
   const cargarCategorias = async () => {
@@ -189,15 +199,6 @@ function App() {
       console.error('Error al cargar metadata:', err);
     }
   };
-
-  // Cargar categorías y metadata al autenticarse
-  useEffect(() => {
-    if (isAuthenticated) {
-      cargarCategorias();
-      cargarDocumentosMeta();
-      cargarHistorialBusqueda();
-    }
-  }, [isAuthenticated]);
 
   // --- HISTORIAL DE BÚSQUEDA PERSISTENTE ---
   const cargarHistorialBusqueda = async () => {
@@ -256,15 +257,60 @@ function App() {
   };
 
   // --- REGISTRO DE AUDITORÍA (HU4) ---
-  const registrarAuditoria = (accion: string, documento: string) => {
-    const newLog = {
-      id: Date.now(),
-      usuario: auth.currentUser?.displayName || auth.currentUser?.email || 'Usuario',
-      accion,
-      documento,
-      fecha: new Date().toISOString()
-    };
-    setHistoryLogs(prev => [newLog, ...prev]);
+  const cargarAuditoria = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'audit_logs'));
+      const logs: HistoryLog[] = [];
+      const now = new Date().getTime();
+      const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+      const deletePromises: Promise<void>[] = [];
+
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const logTime = new Date(data.fecha).getTime();
+        // Borrar si tiene más de 30 días
+        if (now - logTime > thirtyDays) {
+          deletePromises.push(deleteDoc(doc(db, 'audit_logs', docSnap.id)));
+        } else {
+          logs.push({ id: docSnap.id, ...data } as HistoryLog);
+        }
+      });
+      await Promise.all(deletePromises);
+      logs.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setHistoryLogs(logs);
+    } catch (err) {
+      console.error('Error al cargar auditoría:', err);
+    }
+  };
+
+  const limpiarAuditoria = async () => {
+    if (!auth.currentUser) return;
+    try {
+      const querySnapshot = await getDocs(collection(db, 'audit_logs'));
+      const deletePromises: Promise<void>[] = [];
+      querySnapshot.forEach((docSnap) => {
+        deletePromises.push(deleteDoc(doc(db, 'audit_logs', docSnap.id)));
+      });
+      await Promise.all(deletePromises);
+      setHistoryLogs([]);
+      showToast('Historial de cambios limpiado exitosamente.', 'success');
+    } catch (err) {
+      console.error('Error al limpiar auditoría:', err);
+      showToast('Error al limpiar el historial de cambios.', 'error');
+    }
+  };
+
+  const registrarAuditoria = async (accion: string, documento: string) => {
+    const usuario = auth.currentUser?.displayName || auth.currentUser?.email || 'Usuario';
+    const fecha = new Date().toISOString();
+    try {
+      await addDoc(collection(db, 'audit_logs'), { usuario, accion, documento, fecha });
+      if (vistaActual === 'historial') {
+        cargarAuditoria();
+      }
+    } catch (err) {
+      console.error('Error al registrar auditoría:', err);
+    }
   };
 
   // --- SUBIDA DE ARCHIVOS ---
@@ -275,13 +321,13 @@ function App() {
     if (!file) return;
 
     if (file.type !== 'application/pdf') {
-      alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
+      showToast('⚠️ Por favor, selecciona únicamente archivos PDF.', 'error');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+      showToast('⚠️ El archivo es demasiado pesado. El límite es de 10 MB.', 'error');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -340,13 +386,14 @@ function App() {
         }
       }
 
-      alert(`✅ ¡Subida exitosa!\nArchivo: ${uploadedFilename}`);
+      showToast(`¡Subida exitosa! Archivo: ${uploadedFilename}`, 'success');
       cerrarModalSubida();
+      if (vistaActual === 'explorador') abrirExplorador();
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 413) {
-        alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+        showToast('El archivo es demasiado pesado. Límite: 10 MB.', 'error');
       } else {
-        alert('❌ Hubo un error al intentar subir el archivo al servidor.');
+        showToast('Hubo un error al intentar subir el archivo al servidor.', 'error');
       }
       setUploading(false);
     }
@@ -359,7 +406,7 @@ function App() {
       setListaArchivos(response.data);
       setVistaActual('explorador');
     } catch {
-      alert('❌ Error al conectar con el servidor para ver los archivos.');
+      showToast('Error al conectar con el servidor para ver los archivos.', 'error');
     }
   };
 
@@ -529,12 +576,12 @@ function App() {
 
     try {
       await axios.post(`${API_BASE}/api/files/${encodeURIComponent(filename)}/trash`);
-      alert('🗑️ Archivo movido a la papelera.');
+      showToast('Archivo movido a la papelera.', 'info');
       registrarAuditoria('Movió a papelera', filename);
       const response = await axios.get(`${API_BASE}/api/files`);
       setListaArchivos(response.data);
     } catch {
-      alert('❌ Error al intentar mover el archivo a la papelera.');
+      showToast('Error al intentar mover el archivo a la papelera.', 'error');
     }
   };
 
@@ -545,48 +592,47 @@ function App() {
       setTrashFiles(response.data);
       setVistaActual('papelera');
     } catch {
-      alert('❌ Error al cargar la papelera.');
+      showToast('Error al cargar la papelera.', 'error');
     }
   };
 
   const restaurarArchivo = async (filename: string) => {
     try {
       await axios.post(`${API_BASE}/api/trash/${encodeURIComponent(filename)}/restore`);
-      alert('♻️ Archivo restaurado correctamente.');
+      showToast('Archivo restaurado correctamente.', 'success');
       registrarAuditoria('Restauró archivo', filename);
-      const response = await axios.get(`${API_BASE}/api/trash`);
-      setTrashFiles(response.data);
+      abrirPapelera(); // recargar
     } catch {
-      alert('❌ Error al restaurar el archivo.');
+      showToast('Error al intentar restaurar el archivo.', 'error');
     }
   };
 
-  const eliminarPermanente = async (filename: string) => {
-    const confirmacion = confirm(`⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar permanentemente?\n\n"${filename}"`);
+  const eliminarDefinitivo = async (filename: string) => {
+    const confirmacion = confirm(`⚠️ ADVERTENCIA: Esta acción es irreversible.\n¿Eliminar definitivamente "${filename}"?`);
     if (!confirmacion) return;
 
     try {
       await axios.delete(`${API_BASE}/api/trash/${encodeURIComponent(filename)}`);
-      alert('💀 Archivo eliminado permanentemente.');
-      registrarAuditoria('Eliminó permanentemente', filename);
-      const response = await axios.get(`${API_BASE}/api/trash`);
-      setTrashFiles(response.data);
+      showToast('Archivo eliminado permanentemente.', 'info');
+      registrarAuditoria('Eliminó definitivamente', filename);
+      abrirPapelera(); // recargar
     } catch {
-      alert('❌ Error al eliminar el archivo.');
+      showToast('Error al eliminar permanentemente.', 'error');
     }
   };
 
   const vaciarPapelera = async () => {
-    const confirmacion = confirm(`⚠️ ¿Estás seguro de que deseas vaciar toda la papelera?\n\nEsta acción eliminará ${trashFiles.length} archivo(s) permanentemente.`);
+    if (trashFiles.length === 0) return;
+    const confirmacion = confirm(`⚠️ ADVERTENCIA: Vas a eliminar ${trashFiles.length} archivos permanentemente.\n¿Estás seguro?`);
     if (!confirmacion) return;
 
     try {
       await axios.delete(`${API_BASE}/api/trash`);
-      alert('🗑️ Papelera vaciada correctamente.');
-      registrarAuditoria('Vació la papelera', `${trashFiles.length} archivos`);
+      showToast('La papelera ha sido vaciada.', 'info');
+      registrarAuditoria('Vació la papelera', 'Todos los archivos');
       setTrashFiles([]);
     } catch {
-      alert('❌ Error al vaciar la papelera.');
+      showToast('Error al intentar vaciar la papelera.', 'error');
     }
   };
 
@@ -603,20 +649,19 @@ function App() {
       await cargarCategorias();
       registrarAuditoria('Creó categoría', newCategoryName.trim());
     } catch (err) {
-      alert('❌ Error al crear la categoría.');
+      showToast('Error al crear la categoría.', 'error');
       console.error(err);
     }
   };
 
   const eliminarCategoria = async (id: string, nombre: string) => {
-    const confirmacion = confirm(`¿Eliminar la categoría "${nombre}"?`);
-    if (!confirmacion) return;
+    if (!confirm(`¿Eliminar la categoría "${nombre}"?`)) return;
     try {
       await deleteDoc(doc(db, 'categories', id));
       await cargarCategorias();
       registrarAuditoria('Eliminó categoría', nombre);
     } catch (err) {
-      alert('❌ Error al eliminar la categoría.');
+      showToast('Error al eliminar la categoría.', 'error');
       console.error(err);
     }
   };
@@ -663,7 +708,7 @@ function App() {
   const cambiarRol = async (id: string, nuevoRol: string) => {
     // Bug 3: No permitir modificar el propio rol
     if (id === auth.currentUser?.uid) {
-      alert('⚠️ No puedes modificar tu propio rol.');
+      showToast('No puedes modificar tu propio rol.', 'error');
       return;
     }
 
@@ -672,9 +717,9 @@ function App() {
       cargarUsuarios();
       const usuario = usersList.find(u => u.id === id);
       registrarAuditoria(`Cambió rol a ${nuevoRol.toUpperCase()}`, `Usuario: ${usuario?.nombre || usuario?.correo || id}`);
-      alert('✅ Rol actualizado correctamente.');
+      showToast('Rol actualizado correctamente.', 'success');
     } catch (err) {
-      alert("Error al cambiar el rol");
+      showToast('Error al cambiar el rol.', 'error');
     }
   };
 
@@ -847,12 +892,12 @@ function App() {
                     <p>Asignar permisos a usuarios</p>
                   </button>
 
-                  <button className="action-card" onClick={() => setVistaActual('historial')}>
+                  <button className="action-card" onClick={() => { cargarAuditoria(); setVistaActual('historial'); }}>
                     <div className="card-icon" style={{ background: 'rgba(79, 140, 255, 0.1)' }}>
                       <History size={26} color="#4f8cff" />
                     </div>
                     <h3>Auditoría</h3>
-                    <p>Historial de cambios del sistema</p>
+                    <p>Historial de cambios (últimos 30 días)</p>
                   </button>
 
                   <button className="action-card" onClick={() => { cargarCategorias(); setVistaActual('categorias'); }}>
@@ -1112,7 +1157,7 @@ function App() {
                         <RotateCcw size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
                         Restaurar
                       </button>
-                      <button className="file-delete" onClick={() => eliminarPermanente(archivo.name)} title="Eliminar permanentemente">
+                      <button className="file-delete" onClick={() => eliminarDefinitivo(archivo.name)} title="Eliminar permanentemente">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -1190,38 +1235,51 @@ function App() {
           </div>
         )}
 
-        {/* === HISTORIAL (HU4 - Solo Admin) === */}
-        {vistaActual === 'historial' && userRole === 'admin' && (
-          <div className="panel">
+        {/* === HISTORIAL (Auditoría) === */}
+        {vistaActual === 'historial' && (
+          <div className="panel animate-fade">
             <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
-                <ArrowLeft size={16} /> Volver
-              </button>
-              <h2>Historial y Auditoría</h2>
+              <h2>Historial de Auditoría</h2>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button className="btn-secondary" onClick={() => setVistaActual('dashboard')}>Volver al Dashboard</button>
+                <button className="btn-save" onClick={limpiarAuditoria} style={{ background: 'var(--accent-red)', border: 'none' }}>
+                  <Trash2 size={16} style={{ marginRight: 6 }} /> Limpiar Historial
+                </button>
+              </div>
             </div>
-            <div style={{ background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
-              <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', color: 'var(--text-primary)', fontSize: '14px' }}>
+            <div className="table-container">
+              <table className="user-table">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-card)', background: 'var(--bg-glass)' }}>
-                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Fecha</th>
-                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Usuario</th>
-                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Acción</th>
-                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Documento</th>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Usuario</th>
+                    <th>Acción</th>
+                    <th>Documento / Elemento</th>
                   </tr>
                 </thead>
                 <tbody>
                   {historyLogs.map(log => (
-                    <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
-                      <td style={{ padding: '12px 16px' }}>{log.usuario}</td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span style={{ color: log.accion.includes('Eliminó') || log.accion.includes('papelera') ? '#f87171' : log.accion.includes('Subió') || log.accion.includes('Restauró') ? '#34d399' : 'var(--text-secondary)' }}>
+                    <tr key={log.id}>
+                      <td style={{ color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
+                      <td style={{ fontWeight: 500 }}>{log.usuario}</td>
+                      <td>
+                        <span style={{
+                          padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600,
+                          background: 'rgba(79,140,255,0.1)', color: '#4f8cff'
+                        }}>
                           {log.accion}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 16px', color: '#4f8cff' }}>{log.documento}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{log.documento}</td>
                     </tr>
                   ))}
+                  {historyLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
+                        No hay registros de auditoría recientes (últimos 30 días).
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1491,22 +1549,12 @@ function App() {
             </div>
 
             {/* Categoría */}
-            {categories.length > 0 && (
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>
-                  Categoría <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(opcional)</span>
-                </label>
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>
+                Categoría <span style={{ color: 'var(--accent-amber)', fontWeight: 400 }}>(requerido)</span>
+              </label>
+              {categories.length > 0 ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  <button
-                    onClick={() => setUploadCategory('')}
-                    style={{
-                      padding: '6px 14px', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '13px',
-                      fontFamily: 'inherit', transition: 'all 0.15s ease',
-                      background: !uploadCategory ? 'rgba(79,140,255,0.15)' : 'var(--bg-input)',
-                      border: `1px solid ${!uploadCategory ? 'rgba(79,140,255,0.3)' : 'var(--border-subtle)'}`,
-                      color: !uploadCategory ? '#4f8cff' : 'var(--text-secondary)'
-                    }}
-                  >Sin categoría</button>
                   {categories.map(cat => (
                     <button
                       key={cat.id}
@@ -1521,8 +1569,12 @@ function App() {
                     >{cat.nombre}</button>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div style={{ padding: '12px', background: 'rgba(251,191,36,0.1)', color: '#fbbf24', borderRadius: 'var(--radius-sm)', fontSize: '13px', border: '1px solid rgba(251,191,36,0.2)' }}>
+                  ⚠️ No hay categorías disponibles. El administrador debe crear al menos una categoría para poder subir archivos.
+                </div>
+              )}
+            </div>
 
             {/* Botones */}
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -1533,13 +1585,13 @@ function App() {
               }}>Cancelar</button>
               <button
                 onClick={handleConfirmUpload}
-                disabled={!uploadFile || !uploadFileName.trim() || uploading}
+                disabled={!uploadFile || !uploadFileName.trim() || !uploadCategory || uploading}
                 style={{
-                  background: (!uploadFile || !uploadFileName.trim() || uploading) ? 'rgba(79,140,255,0.3)' : 'var(--gradient-main)',
+                  background: (!uploadFile || !uploadFileName.trim() || !uploadCategory || uploading) ? 'rgba(79,140,255,0.3)' : 'var(--gradient-main)',
                   backgroundSize: '200% auto', color: 'white', border: 'none',
-                  padding: '12px 24px', borderRadius: 'var(--radius-sm)', cursor: (!uploadFile || !uploadFileName.trim() || uploading) ? 'not-allowed' : 'pointer',
+                  padding: '12px 24px', borderRadius: 'var(--radius-sm)', cursor: (!uploadFile || !uploadFileName.trim() || !uploadCategory || uploading) ? 'not-allowed' : 'pointer',
                   fontSize: '14px', fontWeight: 600, fontFamily: 'inherit', transition: 'all 0.25s ease',
-                  display: 'flex', alignItems: 'center', gap: '8px', opacity: (!uploadFile || !uploadFileName.trim() || uploading) ? 0.6 : 1
+                  display: 'flex', alignItems: 'center', gap: '8px', opacity: (!uploadFile || !uploadFileName.trim() || !uploadCategory || uploading) ? 0.6 : 1
                 }}
               >
                 {uploading ? <RefreshCcw size={16} className="spin-icon" /> : <UploadCloud size={16} />}
@@ -1547,6 +1599,20 @@ function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* TOAST COMPONENT */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: '24px', right: '24px', zIndex: 1000,
+          background: toast.type === 'error' ? 'var(--accent-red)' : toast.type === 'info' ? '#4f8cff' : 'var(--accent-green)',
+          color: 'white', padding: '12px 20px', borderRadius: 'var(--radius-md)',
+          boxShadow: 'var(--shadow-lg)', display: 'flex', alignItems: 'center', gap: '8px',
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          {toast.type === 'error' ? <XCircle size={18} /> : toast.type === 'info' ? <CheckCircle size={18} /> : <CheckCircle size={18} />}
+          <span style={{ fontSize: '14px', fontWeight: 500 }}>{toast.message}</span>
         </div>
       )}
 
