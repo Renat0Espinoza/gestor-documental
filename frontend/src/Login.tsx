@@ -10,7 +10,7 @@ import { doc, setDoc } from 'firebase/firestore'; // Inyectado para roles
 import { auth, db } from './firebase'; // Inyectado 'db'
 
 interface LoginProps {
-  onLoginSuccess: () => void;
+  onLoginSuccess: (name?: string) => void;
 }
 
 type Vista = 'login' | 'register' | 'forgot';
@@ -47,7 +47,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           fechaCreacion: new Date().toISOString()
         });
 
-        onLoginSuccess();
+        onLoginSuccess(nombre.trim());
       } else {
         // Login normal
         await signInWithEmailAndPassword(auth, email, password);

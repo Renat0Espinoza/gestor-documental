@@ -16,6 +16,10 @@ app.use(express.json());
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
+// --- PAPELERA DE RECICLAJE ---
+const trashDir = path.join(__dirname, 'trash');
+if (!fs.existsSync(trashDir)) fs.mkdirSync(trashDir, { recursive: true });
+
 const storage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadsDir),
     filename: (_req, file, cb) => {
@@ -129,8 +133,8 @@ app.get('/api/files/:filename', (req, res) => {
     res.download(filePath);
 });
 
-// 5. ELIMINAR ARCHIVO POR NOMBRE
-app.delete('/api/files/:filename', (req, res) => {
+// 5. MOVER ARCHIVO A PAPELERA (en vez de eliminar directamente)
+app.post('/api/files/:filename/trash', (req, res) => {
     const filePath = path.join(uploadsDir, req.params.filename);
 
     // Prevenir ataques de path traversal
@@ -143,16 +147,100 @@ app.delete('/api/files/:filename', (req, res) => {
     }
 
     try {
-        fs.unlinkSync(filePath);
-        console.log('🗑️ Archivo eliminado:', req.params.filename);
-        res.json({ success: true, message: 'Archivo eliminado correctamente' });
+        const trashPath = path.join(trashDir, req.params.filename);
+        fs.renameSync(filePath, trashPath);
+        console.log('🗑️ Archivo movido a papelera:', req.params.filename);
+        res.json({ success: true, message: 'Archivo movido a la papelera' });
     } catch (err) {
-        console.error('Error al eliminar archivo:', err);
+        console.error('Error al mover a papelera:', err);
+        res.status(500).json({ error: 'No se pudo mover el archivo a la papelera' });
+    }
+});
+
+// 6. LISTAR ARCHIVOS EN PAPELERA
+app.get('/api/trash', (_req, res) => {
+    try {
+        if (!fs.existsSync(trashDir)) return res.json([]);
+        const files = fs.readdirSync(trashDir)
+            .filter(f => f !== '.gitkeep')
+            .map(filename => {
+                try {
+                    const stats = fs.statSync(path.join(trashDir, filename));
+                    return { name: filename, size: stats.size, modified: stats.mtime };
+                } catch {
+                    return { name: filename, size: 0, modified: null };
+                }
+            });
+        res.json(files);
+    } catch (err) {
+        console.error('Error al listar papelera:', err);
+        res.status(500).json({ error: 'No se pudo leer la papelera' });
+    }
+});
+
+// 7. RESTAURAR ARCHIVO DESDE PAPELERA
+app.post('/api/trash/:filename/restore', (req, res) => {
+    const trashPath = path.join(trashDir, req.params.filename);
+
+    if (!trashPath.startsWith(trashDir)) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    if (!fs.existsSync(trashPath)) {
+        return res.status(404).json({ error: 'Archivo no encontrado en papelera' });
+    }
+
+    try {
+        const filePath = path.join(uploadsDir, req.params.filename);
+        fs.renameSync(trashPath, filePath);
+        console.log('♻️ Archivo restaurado:', req.params.filename);
+        res.json({ success: true, message: 'Archivo restaurado correctamente' });
+    } catch (err) {
+        console.error('Error al restaurar archivo:', err);
+        res.status(500).json({ error: 'No se pudo restaurar el archivo' });
+    }
+});
+
+// 8. ELIMINAR ARCHIVO PERMANENTEMENTE DE PAPELERA
+app.delete('/api/trash/:filename', (req, res) => {
+    const trashPath = path.join(trashDir, req.params.filename);
+
+    if (!trashPath.startsWith(trashDir)) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    if (!fs.existsSync(trashPath)) {
+        return res.status(404).json({ error: 'Archivo no encontrado en papelera' });
+    }
+
+    try {
+        fs.unlinkSync(trashPath);
+        console.log('💀 Archivo eliminado permanentemente:', req.params.filename);
+        res.json({ success: true, message: 'Archivo eliminado permanentemente' });
+    } catch (err) {
+        console.error('Error al eliminar permanentemente:', err);
         res.status(500).json({ error: 'No se pudo eliminar el archivo' });
     }
 });
 
-// 5. ESTADO DEL DEPLOY (GitHub Actions)
+// 9. VACIAR PAPELERA COMPLETA
+app.delete('/api/trash', (_req, res) => {
+    try {
+        if (fs.existsSync(trashDir)) {
+            const files = fs.readdirSync(trashDir).filter(f => f !== '.gitkeep');
+            files.forEach(file => {
+                fs.unlinkSync(path.join(trashDir, file));
+            });
+            console.log(`🗑️ Papelera vaciada: ${files.length} archivos eliminados`);
+        }
+        res.json({ success: true, message: 'Papelera vaciada correctamente' });
+    } catch (err) {
+        console.error('Error al vaciar papelera:', err);
+        res.status(500).json({ error: 'No se pudo vaciar la papelera' });
+    }
+});
+
+// 10. ESTADO DEL DEPLOY (GitHub Actions)
 app.get('/api/github-status', async (_req, res) => {
     try {
         const owner = process.env.GITHUB_OWNER || 'Renat0Espinoza';

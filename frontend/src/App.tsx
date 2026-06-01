@@ -4,17 +4,38 @@ import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
-  Filter, Users, History, Shield, Eye
+  Filter, Users, History, Shield, Eye, RotateCcw, Tag, Plus, X,
+  Clock, ArrowUpDown, Calendar
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase'; // <-- Modificado para incluir db
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc } from 'firebase/firestore'; // <-- Funciones de Firestore
+import { doc, getDoc, collection, getDocs, updateDoc, setDoc, deleteDoc, addDoc, query, where, orderBy, limit } from 'firebase/firestore'; // <-- Funciones de Firestore
 
 interface FileInfo {
   name: string;
   size: number;
   modified: string | null;
+}
+
+interface Category {
+  id: string;
+  nombre: string;
+  color: string;
+}
+
+interface DocMeta {
+  id: string;
+  filename: string;
+  category: string;
+  uploadedBy: string;
+  uploadedAt: string;
+}
+
+interface SearchHistoryItem {
+  id: string;
+  query: string;
+  timestamp: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -33,7 +54,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 // <-- Modificado: Añadidas las vistas del admin
-type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial';
+type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'papelera' | 'categorias';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -50,6 +71,8 @@ function App() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterExtension, setFilterExtension] = useState('all');
   const [filterSize, setFilterSize] = useState('all');
+  const [filterDate, setFilterDate] = useState('all');
+  const [sortBy, setSortBy] = useState('name-asc');
   const [usersList, setUsersList] = useState<any[]>([]);
   const [historyLogs, setHistoryLogs] = useState<any[]>([
     { id: 1, usuario: 'Sistema', accion: 'Auditoría inicializada', documento: 'N/A', fecha: new Date().toISOString() }
@@ -63,11 +86,31 @@ function App() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [settingsError, setSettingsError] = useState('');
+  const [userCreationDate, setUserCreationDate] = useState('');
+
+  // --- Estado de papelera ---
+  const [trashFiles, setTrashFiles] = useState<FileInfo[]>([]);
+
+  // --- Estado de categorías ---
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryColor, setNewCategoryColor] = useState('#4f8cff');
+  const [documentsMeta, setDocumentsMeta] = useState<DocMeta[]>([]);
+  const [selectedUploadCategory, setSelectedUploadCategory] = useState('');
+  const [filterCategory, setFilterCategory] = useState('all');
+
+  // --- Estado de historial de búsqueda ---
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const API_BASE = '';
+
+  const CATEGORY_COLORS = [
+    '#4f8cff', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
+    '#f472b6', '#38bdf8', '#fb923c', '#818cf8', '#2dd4bf'
+  ];
 
   const checkGithub = async () => {
     setLoading(true);
@@ -100,6 +143,10 @@ function App() {
           } else {
             setUserRole('lector'); // Por defecto para evitar problemas
           }
+          // Obtener fecha de creación
+          if (docSnap.exists() && docSnap.data().fechaCreacion) {
+            setUserCreationDate(docSnap.data().fechaCreacion);
+          }
         } catch (error) {
           console.error("Error al obtener rol:", error);
           setUserRole('lector');
@@ -108,6 +155,99 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // --- CARGAR CATEGORÍAS ---
+  const cargarCategorias = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'categories'));
+      const cats: Category[] = [];
+      querySnapshot.forEach((docSnap) => {
+        cats.push({ id: docSnap.id, ...docSnap.data() } as Category);
+      });
+      setCategories(cats);
+    } catch (err) {
+      console.error('Error al cargar categorías:', err);
+    }
+  };
+
+  // --- CARGAR METADATA DE DOCUMENTOS ---
+  const cargarDocumentosMeta = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'documents'));
+      const docs: DocMeta[] = [];
+      querySnapshot.forEach((docSnap) => {
+        docs.push({ id: docSnap.id, ...docSnap.data() } as DocMeta);
+      });
+      setDocumentsMeta(docs);
+    } catch (err) {
+      console.error('Error al cargar metadata:', err);
+    }
+  };
+
+  // Cargar categorías y metadata al autenticarse
+  useEffect(() => {
+    if (isAuthenticated) {
+      cargarCategorias();
+      cargarDocumentosMeta();
+      cargarHistorialBusqueda();
+    }
+  }, [isAuthenticated]);
+
+  // --- HISTORIAL DE BÚSQUEDA PERSISTENTE ---
+  const cargarHistorialBusqueda = async () => {
+    if (!auth.currentUser) return;
+    try {
+      const histRef = collection(db, 'users', auth.currentUser.uid, 'searchHistory');
+      const querySnapshot = await getDocs(histRef);
+      const items: SearchHistoryItem[] = [];
+      querySnapshot.forEach((docSnap) => {
+        items.push({ id: docSnap.id, ...docSnap.data() } as SearchHistoryItem);
+      });
+      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setSearchHistory(items);
+    } catch (err) {
+      console.error('Error al cargar historial:', err);
+    }
+  };
+
+  const guardarBusqueda = async (searchQuery: string) => {
+    if (!auth.currentUser || !searchQuery.trim()) return;
+    try {
+      const histRef = collection(db, 'users', auth.currentUser.uid, 'searchHistory');
+      // Evitar duplicados - buscar si ya existe
+      const existing = searchHistory.find(h => h.query === searchQuery.trim());
+      if (existing) {
+        // Actualizar timestamp
+        await updateDoc(doc(db, 'users', auth.currentUser.uid, 'searchHistory', existing.id), {
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        await addDoc(histRef, {
+          query: searchQuery.trim(),
+          timestamp: new Date().toISOString()
+        });
+      }
+      await cargarHistorialBusqueda();
+    } catch (err) {
+      console.error('Error al guardar búsqueda:', err);
+    }
+  };
+
+  const limpiarHistorialBusqueda = async () => {
+    if (!auth.currentUser) return;
+    try {
+      const histRef = collection(db, 'users', auth.currentUser.uid, 'searchHistory');
+      const querySnapshot = await getDocs(histRef);
+      const deletePromises: Promise<void>[] = [];
+      querySnapshot.forEach((docSnap) => {
+        deletePromises.push(deleteDoc(doc(db, 'users', auth.currentUser!.uid, 'searchHistory', docSnap.id)));
+      });
+      await Promise.all(deletePromises);
+      setSearchHistory([]);
+    } catch (err) {
+      console.error('Error al limpiar historial:', err);
+    }
+  };
 
   // --- REGISTRO DE AUDITORÍA (HU4) ---
   const registrarAuditoria = (accion: string, documento: string) => {
@@ -146,8 +286,25 @@ function App() {
       const response = await axios.post(`${API_BASE}/api/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
-      registrarAuditoria('Subió el archivo', response.data.file || file.name); // <-- Registro de subida
+      const uploadedFilename = response.data.file || file.name;
+      alert(`✅ ¡Subida exitosa!\nArchivo: ${uploadedFilename}`);
+      registrarAuditoria('Subió el archivo', uploadedFilename); // <-- Registro de subida
+
+      // Guardar metadata del documento con categoría
+      if (selectedUploadCategory && auth.currentUser) {
+        try {
+          await addDoc(collection(db, 'documents'), {
+            filename: uploadedFilename,
+            category: selectedUploadCategory,
+            uploadedBy: auth.currentUser.uid,
+            uploadedAt: new Date().toISOString()
+          });
+          await cargarDocumentosMeta();
+        } catch (err) {
+          console.error('Error al guardar metadata:', err);
+        }
+      }
+      setSelectedUploadCategory('');
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 413) {
         alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
@@ -191,6 +348,8 @@ function App() {
       try {
         const res = await axios.get(`${API_BASE}/api/search`, { params: { q: query } });
         setSearchResults(res.data);
+        // Guardar búsqueda en historial persistente
+        await guardarBusqueda(query);
       } catch {
         setSearchResults([]);
       } finally {
@@ -199,19 +358,62 @@ function App() {
     }, 300);
   };
 
-  // --- LÓGICA FILTROS AVANZADOS (HU1) ---
-  const filteredSearchResults = searchResults.filter(f => {
-    let matchExt = true;
-    if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
+  // --- LÓGICA FILTROS AVANZADOS ---
+  const applyFiltersAndSort = (files: FileInfo[]) => {
+    let filtered = files.filter(f => {
+      // Filtro por extensión
+      let matchExt = true;
+      if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
 
-    let matchSize = true;
-    if (filterSize !== 'all') {
-      if (filterSize === 'small') matchSize = f.size < 1024 * 1024; // < 1MB
-      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024; // 1-5MB
-      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024; // > 5MB
-    }
-    return matchExt && matchSize;
-  });
+      // Filtro por tamaño
+      let matchSize = true;
+      if (filterSize !== 'all') {
+        if (filterSize === 'small') matchSize = f.size < 1024 * 1024;
+        else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
+        else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
+      }
+
+      // Filtro por fecha
+      let matchDate = true;
+      if (filterDate !== 'all' && f.modified) {
+        const fileDate = new Date(f.modified);
+        const now = new Date();
+        if (filterDate === 'today') {
+          matchDate = fileDate.toDateString() === now.toDateString();
+        } else if (filterDate === 'week') {
+          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          matchDate = fileDate >= weekAgo;
+        } else if (filterDate === 'month') {
+          const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          matchDate = fileDate >= monthAgo;
+        }
+      }
+
+      // Filtro por categoría
+      let matchCat = true;
+      if (filterCategory !== 'all') {
+        const docMeta = documentsMeta.find(d => d.filename === f.name);
+        matchCat = docMeta ? docMeta.category === filterCategory : false;
+      }
+
+      return matchExt && matchSize && matchDate && matchCat;
+    });
+
+    // Ordenar
+    filtered.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name);
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'size-asc') return a.size - b.size;
+      if (sortBy === 'size-desc') return b.size - a.size;
+      if (sortBy === 'date-asc') return new Date(a.modified || 0).getTime() - new Date(b.modified || 0).getTime();
+      if (sortBy === 'date-desc') return new Date(b.modified || 0).getTime() - new Date(a.modified || 0).getTime();
+      return 0;
+    });
+
+    return filtered;
+  };
+
+  const filteredSearchResults = applyFiltersAndSort(searchResults);
 
   const handleDownload = (filename: string) => {
     registrarAuditoria('Descargó el archivo', filename); // <-- Registro de descarga
@@ -248,11 +450,15 @@ function App() {
 
       if (newDisplayName.trim() !== displayName) {
         await updateProfile(auth.currentUser, { displayName: newDisplayName.trim() });
+        // Sincronizar nombre en Firestore
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), { nombre: newDisplayName.trim() });
         setDisplayName(newDisplayName.trim());
       }
 
       if (newEmail !== auth.currentUser.email) {
         await updateEmail(auth.currentUser, newEmail);
+        // Sincronizar correo en Firestore
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), { correo: newEmail });
       }
 
       if (newPassword.length > 0) {
@@ -278,25 +484,130 @@ function App() {
     }
   };
 
-  // --- ELIMINAR ARCHIVO (doble confirmación) ---
+  // --- MOVER ARCHIVO A PAPELERA (en vez de eliminar directamente) ---
   const handleDelete = async (filename: string) => {
     if (userRole === 'lector') return; // Bloqueo de seguridad
 
-    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
-    if (!primera) return;
-
-    const segunda = confirm('⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?');
-    if (!segunda) return;
+    const confirmacion = confirm(`¿Estás seguro de que deseas enviar este archivo a la papelera?\n\n"${filename}"`);
+    if (!confirmacion) return;
 
     try {
-      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
-      alert('🗑️ Archivo eliminado correctamente.');
-      registrarAuditoria('Eliminó el archivo', filename); // <-- Registro
+      await axios.post(`${API_BASE}/api/files/${encodeURIComponent(filename)}/trash`);
+      alert('🗑️ Archivo movido a la papelera.');
+      registrarAuditoria('Movió a papelera', filename);
       const response = await axios.get(`${API_BASE}/api/files`);
       setListaArchivos(response.data);
     } catch {
-      alert('❌ Error al intentar eliminar el archivo.');
+      alert('❌ Error al intentar mover el archivo a la papelera.');
     }
+  };
+
+  // --- PAPELERA ---
+  const abrirPapelera = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/trash`);
+      setTrashFiles(response.data);
+      setVistaActual('papelera');
+    } catch {
+      alert('❌ Error al cargar la papelera.');
+    }
+  };
+
+  const restaurarArchivo = async (filename: string) => {
+    try {
+      await axios.post(`${API_BASE}/api/trash/${encodeURIComponent(filename)}/restore`);
+      alert('♻️ Archivo restaurado correctamente.');
+      registrarAuditoria('Restauró archivo', filename);
+      const response = await axios.get(`${API_BASE}/api/trash`);
+      setTrashFiles(response.data);
+    } catch {
+      alert('❌ Error al restaurar el archivo.');
+    }
+  };
+
+  const eliminarPermanente = async (filename: string) => {
+    const confirmacion = confirm(`⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar permanentemente?\n\n"${filename}"`);
+    if (!confirmacion) return;
+
+    try {
+      await axios.delete(`${API_BASE}/api/trash/${encodeURIComponent(filename)}`);
+      alert('💀 Archivo eliminado permanentemente.');
+      registrarAuditoria('Eliminó permanentemente', filename);
+      const response = await axios.get(`${API_BASE}/api/trash`);
+      setTrashFiles(response.data);
+    } catch {
+      alert('❌ Error al eliminar el archivo.');
+    }
+  };
+
+  const vaciarPapelera = async () => {
+    const confirmacion = confirm(`⚠️ ¿Estás seguro de que deseas vaciar toda la papelera?\n\nEsta acción eliminará ${trashFiles.length} archivo(s) permanentemente.`);
+    if (!confirmacion) return;
+
+    try {
+      await axios.delete(`${API_BASE}/api/trash`);
+      alert('🗑️ Papelera vaciada correctamente.');
+      registrarAuditoria('Vació la papelera', `${trashFiles.length} archivos`);
+      setTrashFiles([]);
+    } catch {
+      alert('❌ Error al vaciar la papelera.');
+    }
+  };
+
+  // --- CATEGORÍAS ---
+  const crearCategoria = async () => {
+    if (!newCategoryName.trim()) return;
+    try {
+      await addDoc(collection(db, 'categories'), {
+        nombre: newCategoryName.trim(),
+        color: newCategoryColor
+      });
+      setNewCategoryName('');
+      setNewCategoryColor('#4f8cff');
+      await cargarCategorias();
+      registrarAuditoria('Creó categoría', newCategoryName.trim());
+    } catch (err) {
+      alert('❌ Error al crear la categoría.');
+      console.error(err);
+    }
+  };
+
+  const eliminarCategoria = async (id: string, nombre: string) => {
+    const confirmacion = confirm(`¿Eliminar la categoría "${nombre}"?`);
+    if (!confirmacion) return;
+    try {
+      await deleteDoc(doc(db, 'categories', id));
+      await cargarCategorias();
+      registrarAuditoria('Eliminó categoría', nombre);
+    } catch (err) {
+      alert('❌ Error al eliminar la categoría.');
+      console.error(err);
+    }
+  };
+
+  const asignarCategoria = async (filename: string, categoryId: string) => {
+    try {
+      const existing = documentsMeta.find(d => d.filename === filename);
+      if (existing) {
+        await updateDoc(doc(db, 'documents', existing.id), { category: categoryId });
+      } else {
+        await addDoc(collection(db, 'documents'), {
+          filename,
+          category: categoryId,
+          uploadedBy: auth.currentUser?.uid || '',
+          uploadedAt: new Date().toISOString()
+        });
+      }
+      await cargarDocumentosMeta();
+    } catch (err) {
+      console.error('Error al asignar categoría:', err);
+    }
+  };
+
+  const getCategoryForFile = (filename: string): Category | undefined => {
+    const docMeta = documentsMeta.find(d => d.filename === filename);
+    if (!docMeta) return undefined;
+    return categories.find(c => c.id === docMeta.category);
   };
 
   // --- FUNCIONES ADMIN (HU2) ---
@@ -314,10 +625,17 @@ function App() {
   };
 
   const cambiarRol = async (id: string, nuevoRol: string) => {
+    // Bug 3: No permitir modificar el propio rol
+    if (id === auth.currentUser?.uid) {
+      alert('⚠️ No puedes modificar tu propio rol.');
+      return;
+    }
+
     try {
       await updateDoc(doc(db, 'users', id), { rol: nuevoRol });
       cargarUsuarios();
-      registrarAuditoria(`Cambió rol a ${nuevoRol.toUpperCase()}`, `Usuario ID: ${id}`);
+      const usuario = usersList.find(u => u.id === id);
+      registrarAuditoria(`Cambió rol a ${nuevoRol.toUpperCase()}`, `Usuario: ${usuario?.nombre || usuario?.correo || id}`);
       alert('✅ Rol actualizado correctamente.');
     } catch (err) {
       alert("Error al cambiar el rol");
@@ -325,40 +643,74 @@ function App() {
   };
 
   // --- COMPONENTE DE LISTA DE ARCHIVOS REUTILIZABLE ---
-  const renderFileList = (files: FileInfo[]) => (
+  const renderFileList = (files: FileInfo[], showCategorySelector?: boolean) => (
     <div className="file-list">
-      {files.map((archivo, index) => (
-        <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
-          <div className="file-icon">
-            <FileText size={20} color="#f87171" />
-          </div>
-          <div className="file-info">
-            <div className="file-name">{archivo.name}</div>
-            <div className="file-meta">
-              {formatFileSize(archivo.size)}
-              {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+      {files.map((archivo, index) => {
+        const fileCat = getCategoryForFile(archivo.name);
+        return (
+          <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
+            <div className="file-icon">
+              <FileText size={20} color="#f87171" />
+            </div>
+            <div className="file-info">
+              <div className="file-name">
+                {archivo.name}
+                {fileCat && (
+                  <span style={{
+                    marginLeft: '8px', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 600,
+                    backgroundColor: `${fileCat.color}20`, color: fileCat.color,
+                    border: `1px solid ${fileCat.color}40`
+                  }}>
+                    {fileCat.nombre}
+                  </span>
+                )}
+              </div>
+              <div className="file-meta">
+                {formatFileSize(archivo.size)}
+                {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+              </div>
+            </div>
+            <div className="file-actions">
+              {/* Selector de categoría para admin y colaborador */}
+              {showCategorySelector && userRole !== 'lector' && categories.length > 0 && (
+                <select
+                  value={getCategoryForFile(archivo.name)?.id || ''}
+                  onChange={(e) => asignarCategoria(archivo.name, e.target.value)}
+                  style={{
+                    background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)',
+                    padding: '4px 8px', borderRadius: '4px', outline: 'none', fontSize: '11px', maxWidth: '120px'
+                  }}
+                  title="Asignar categoría"
+                >
+                  <option value="">Sin categoría</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                  ))}
+                </select>
+              )}
+              <button className="file-download" onClick={() => handleDownload(archivo.name)}>
+                <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                Descargar
+              </button>
+              {/* HU3: Ocultar botón eliminar para Lectores */}
+              {userRole !== 'lector' && (
+                <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Mover a papelera">
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
           </div>
-          <div className="file-actions">
-            <button className="file-download" onClick={() => handleDownload(archivo.name)}>
-              <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-              Descargar
-            </button>
-            {/* HU3: Ocultar botón eliminar para Lectores */}
-            {userRole !== 'lector' && (
-              <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Eliminar archivo">
-                <Trash2 size={14} />
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 
   // --- AUTH GATE ---
   if (!isAuthenticated) {
-    return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
+    return <Login onLoginSuccess={(name?: string) => {
+      if (name) setDisplayName(name);
+      setIsAuthenticated(true);
+    }} />;
   }
 
   return (
@@ -437,6 +789,17 @@ function App() {
                 <p>Ajustes del sistema y conexión</p>
               </button>
 
+              {/* Papelera - para admin y colaborador */}
+              {userRole !== 'lector' && (
+                <button className="action-card" onClick={abrirPapelera}>
+                  <div className="card-icon" style={{ background: 'rgba(248, 113, 113, 0.1)' }}>
+                    <Trash2 size={26} color="#f87171" />
+                  </div>
+                  <h3>Papelera</h3>
+                  <p>Archivos eliminados temporalmente</p>
+                </button>
+              )}
+
               {/* HU2 y HU4: Tarjetas Exclusivas Administrador */}
               {userRole === 'admin' && (
                 <>
@@ -455,9 +818,40 @@ function App() {
                     <h3>Auditoría</h3>
                     <p>Historial de cambios del sistema</p>
                   </button>
+
+                  <button className="action-card" onClick={() => { cargarCategorias(); setVistaActual('categorias'); }}>
+                    <div className="card-icon" style={{ background: 'rgba(251, 191, 36, 0.1)' }}>
+                      <Tag size={26} color="#fbbf24" />
+                    </div>
+                    <h3>Categorías</h3>
+                    <p>Administrar categorías de documentos</p>
+                  </button>
                 </>
               )}
             </div>
+
+            {/* Selector de categoría para la subida - visible cuando hay categorías */}
+            {userRole !== 'lector' && categories.length > 0 && (
+              <div style={{ marginTop: '24px', padding: '16px 20px', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <Tag size={16} />
+                  <span style={{ fontWeight: 600 }}>Categoría para próxima subida:</span>
+                  <select
+                    value={selectedUploadCategory}
+                    onChange={(e) => setSelectedUploadCategory(e.target.value)}
+                    style={{
+                      background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)',
+                      padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px'
+                    }}
+                  >
+                    <option value="">Sin categoría</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -472,14 +866,41 @@ function App() {
               <span className="badge">{listaArchivos.length}</span>
             </div>
 
-            {listaArchivos.length === 0 ? (
-              <div className="empty-state">
-                <Inbox size={48} />
-                <p>No hay documentos en la bodega aún.</p>
+            {/* Filtro por categoría en explorador */}
+            {categories.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                <Tag size={14} />
+                <span>Filtrar por categoría:</span>
+                <select
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value)}
+                  style={{
+                    background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)',
+                    borderRadius: '4px', padding: '4px 8px', outline: 'none', fontSize: '13px'
+                  }}
+                >
+                  <option value="all">Todas</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                  ))}
+                </select>
               </div>
-            ) : (
-              renderFileList(listaArchivos)
             )}
+
+            {(() => {
+              const filtered = filterCategory === 'all' ? listaArchivos : listaArchivos.filter(f => {
+                const docMeta = documentsMeta.find(d => d.filename === f.name);
+                return docMeta ? docMeta.category === filterCategory : false;
+              });
+              return filtered.length === 0 ? (
+                <div className="empty-state">
+                  <Inbox size={48} />
+                  <p>No hay documentos en la bodega aún.</p>
+                </div>
+              ) : (
+                renderFileList(filtered, true)
+              );
+            })()}
           </div>
         )}
 
@@ -513,7 +934,7 @@ function App() {
             </div>
 
             {showAdvancedFilters && (
-              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px', flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
                   <span>Extensión:</span>
                   <select value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
@@ -532,21 +953,157 @@ function App() {
                     <option value="large">Grande (&gt; 5MB)</option>
                   </select>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <Calendar size={14} />
+                  <span>Fecha:</span>
+                  <select value={filterDate} onChange={(e) => setFilterDate(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                    <option value="all">Todas</option>
+                    <option value="today">Hoy</option>
+                    <option value="week">Última semana</option>
+                    <option value="month">Último mes</option>
+                  </select>
+                </div>
+                {categories.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    <Tag size={14} />
+                    <span>Categoría:</span>
+                    <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                      <option value="all">Todas</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <ArrowUpDown size={14} />
+                  <span>Ordenar:</span>
+                  <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                    <option value="name-asc">Nombre (A-Z)</option>
+                    <option value="name-desc">Nombre (Z-A)</option>
+                    <option value="size-asc">Tamaño (menor)</option>
+                    <option value="size-desc">Tamaño (mayor)</option>
+                    <option value="date-asc">Fecha (antigua)</option>
+                    <option value="date-desc">Fecha (reciente)</option>
+                  </select>
+                </div>
               </div>
             )}
 
-            {!searchQuery.trim() && !showAdvancedFilters ? (
+            {/* Historial de búsqueda */}
+            {!searchQuery.trim() && searchHistory.length > 0 && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                    <Clock size={14} />
+                    Búsquedas recientes
+                  </div>
+                  <button
+                    onClick={limpiarHistorialBusqueda}
+                    style={{
+                      background: 'transparent', border: '1px solid rgba(248,113,113,0.2)', color: 'var(--accent-red)',
+                      padding: '4px 12px', borderRadius: 'var(--radius-full)', cursor: 'pointer', fontSize: '12px',
+                      fontFamily: 'inherit', transition: 'all 0.15s ease', display: 'flex', alignItems: 'center', gap: '4px'
+                    }}
+                  >
+                    <Trash2 size={12} /> Limpiar
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {searchHistory.slice(0, 10).map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => handleSearch(item.query)}
+                      style={{
+                        background: 'var(--bg-input)', border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)', padding: '6px 14px', borderRadius: 'var(--radius-full)',
+                        cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit',
+                        transition: 'all 0.15s ease', display: 'flex', alignItems: 'center', gap: '6px'
+                      }}
+                    >
+                      <Search size={12} style={{ color: 'var(--text-muted)' }} />
+                      {item.query}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!searchQuery.trim() && !showAdvancedFilters && searchHistory.length === 0 ? (
               <div className="empty-state">
                 <Search size={48} />
                 <p>Escribe un término para buscar entre tus documentos.</p>
               </div>
-            ) : filteredSearchResults.length === 0 && !searching ? (
+            ) : filteredSearchResults.length === 0 && !searching && searchQuery.trim() ? (
               <div className="empty-state">
                 <Inbox size={48} />
                 <p>No se encontraron archivos con esos filtros y término.</p>
               </div>
+            ) : searchQuery.trim() ? (
+              renderFileList(filteredSearchResults, true)
+            ) : null}
+          </div>
+        )}
+
+        {/* === PAPELERA === */}
+        {vistaActual === 'papelera' && userRole !== 'lector' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Papelera de Reciclaje</h2>
+              <span className="badge">{trashFiles.length}</span>
+              {trashFiles.length > 0 && (
+                <button
+                  onClick={vaciarPapelera}
+                  style={{
+                    marginLeft: 'auto', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)',
+                    color: 'var(--accent-red)', padding: '8px 16px', borderRadius: 'var(--radius-full)',
+                    cursor: 'pointer', fontSize: '12px', fontWeight: 500, fontFamily: 'inherit',
+                    transition: 'all 0.15s ease', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <Trash2 size={14} /> Vaciar Papelera
+                </button>
+              )}
+            </div>
+
+            {trashFiles.length === 0 ? (
+              <div className="empty-state">
+                <Trash2 size={48} />
+                <p>La papelera está vacía.</p>
+              </div>
             ) : (
-              renderFileList(filteredSearchResults)
+              <div className="file-list">
+                {trashFiles.map((archivo, index) => (
+                  <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
+                    <div className="file-icon">
+                      <FileText size={20} color="#f87171" />
+                    </div>
+                    <div className="file-info">
+                      <div className="file-name">{archivo.name}</div>
+                      <div className="file-meta">
+                        {formatFileSize(archivo.size)}
+                        {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+                      </div>
+                    </div>
+                    <div className="file-actions">
+                      <button
+                        className="file-download"
+                        onClick={() => restaurarArchivo(archivo.name)}
+                        style={{ background: 'rgba(52,211,153,0.08)', borderColor: 'rgba(52,211,153,0.15)', color: 'var(--accent-green)' }}
+                      >
+                        <RotateCcw size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                        Restaurar
+                      </button>
+                      <button className="file-delete" onClick={() => eliminarPermanente(archivo.name)} title="Eliminar permanentemente">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -570,32 +1127,48 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {usersList.map(u => (
-                    <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '12px 16px' }}>
-                        <div>{u.nombre || 'Sin nombre'}</div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{u.correo || u.email}</div>
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span style={{
-                          padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
-                          backgroundColor: u.rol === 'admin' ? 'rgba(79, 140, 255, 0.15)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                          color: u.rol === 'admin' ? '#4f8cff' : u.rol === 'colaborador' ? '#34d399' : '#8b92a8',
-                          border: `1px solid ${u.rol === 'admin' ? 'rgba(79, 140, 255, 0.3)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`
-                        }}>{u.rol}</span>
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <select
-                          value={u.rol} onChange={(e) => cambiarRol(u.id, e.target.value)}
-                          style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px' }}
-                        >
-                          <option value="admin">Administrador</option>
-                          <option value="colaborador">Colaborador</option>
-                          <option value="lector">Lector</option>
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
+                  {usersList.map(u => {
+                    const isCurrentUser = u.id === auth.currentUser?.uid;
+                    return (
+                      <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {u.nombre || 'Sin nombre'}
+                            {isCurrentUser && (
+                              <span style={{
+                                padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 600,
+                                backgroundColor: 'rgba(79, 140, 255, 0.15)', color: '#4f8cff',
+                                border: '1px solid rgba(79, 140, 255, 0.3)'
+                              }}>Tú</span>
+                            )}
+                          </div>
+                          <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{u.correo || u.email}</div>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <span style={{
+                            padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
+                            backgroundColor: u.rol === 'admin' ? 'rgba(79, 140, 255, 0.15)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                            color: u.rol === 'admin' ? '#4f8cff' : u.rol === 'colaborador' ? '#34d399' : '#8b92a8',
+                            border: `1px solid ${u.rol === 'admin' ? 'rgba(79, 140, 255, 0.3)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`
+                          }}>{u.rol}</span>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          {isCurrentUser ? (
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No disponible</span>
+                          ) : (
+                            <select
+                              value={u.rol} onChange={(e) => cambiarRol(u.id, e.target.value)}
+                              style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px' }}
+                            >
+                              <option value="admin">Administrador</option>
+                              <option value="colaborador">Colaborador</option>
+                              <option value="lector">Lector</option>
+                            </select>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -627,7 +1200,7 @@ function App() {
                       <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
                       <td style={{ padding: '12px 16px' }}>{log.usuario}</td>
                       <td style={{ padding: '12px 16px' }}>
-                        <span style={{ color: log.accion.includes('Eliminó') ? '#f87171' : log.accion.includes('Subió') ? '#34d399' : 'var(--text-secondary)' }}>
+                        <span style={{ color: log.accion.includes('Eliminó') || log.accion.includes('papelera') ? '#f87171' : log.accion.includes('Subió') || log.accion.includes('Restauró') ? '#34d399' : 'var(--text-secondary)' }}>
                           {log.accion}
                         </span>
                       </td>
@@ -637,6 +1210,92 @@ function App() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* === CATEGORÍAS (Solo Admin) === */}
+        {vistaActual === 'categorias' && userRole === 'admin' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Administrar Categorías</h2>
+            </div>
+
+            {/* Crear nueva categoría */}
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '24px', padding: '16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+              <input
+                type="text"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                placeholder="Nombre de la categoría..."
+                style={{
+                  flex: 1, background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-card)',
+                  padding: '10px 14px', borderRadius: '8px', outline: 'none', fontSize: '14px', fontFamily: 'inherit'
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && crearCategoria()}
+              />
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {CATEGORY_COLORS.map(color => (
+                  <button
+                    key={color}
+                    onClick={() => setNewCategoryColor(color)}
+                    style={{
+                      width: '24px', height: '24px', borderRadius: '50%', border: newCategoryColor === color ? '2px solid white' : '2px solid transparent',
+                      background: color, cursor: 'pointer', transition: 'all 0.15s ease', padding: 0
+                    }}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={crearCategoria}
+                style={{
+                  background: 'var(--gradient-main)', backgroundSize: '200% auto', color: 'white',
+                  border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer',
+                  fontWeight: 600, fontSize: '13px', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '6px',
+                  transition: 'all 0.25s ease'
+                }}
+              >
+                <Plus size={16} /> Crear
+              </button>
+            </div>
+
+            {/* Lista de categorías */}
+            {categories.length === 0 ? (
+              <div className="empty-state">
+                <Tag size={48} />
+                <p>No hay categorías creadas aún.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {categories.map(cat => (
+                  <div key={cat.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 16px', background: 'var(--bg-glass)', border: '1px solid var(--border-subtle)',
+                    borderRadius: '8px', transition: 'all 0.15s ease'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cat.color }} />
+                      <span style={{ fontSize: '14px', fontWeight: 500 }}>{cat.nombre}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        ({documentsMeta.filter(d => d.category === cat.id).length} documentos)
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => eliminarCategoria(cat.id, cat.nombre)}
+                      style={{
+                        background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.15)',
+                        color: 'var(--accent-red)', padding: '6px 10px', borderRadius: 'var(--radius-full)',
+                        cursor: 'pointer', transition: 'all 0.15s ease', display: 'flex', alignItems: 'center'
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -652,6 +1311,34 @@ function App() {
 
             <div className="settings-section">
               <h3 className="settings-section-title">Perfil de Usuario</h3>
+
+              {/* Info de rol y fecha */}
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                <div style={{
+                  padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)', fontSize: '13px', color: 'var(--text-secondary)'
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rol</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {userRole === 'admin' ? <Shield size={14} color="#4f8cff" /> : userRole === 'colaborador' ? <User size={14} color="#34d399" /> : <Eye size={14} color="#8b92a8" />}
+                    <span style={{ fontWeight: 600, color: userRole === 'admin' ? '#4f8cff' : userRole === 'colaborador' ? '#34d399' : '#8b92a8' }}>
+                      {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
+                    </span>
+                  </div>
+                </div>
+                {userCreationDate && (
+                  <div style={{
+                    padding: '12px 16px', background: 'var(--bg-input)', borderRadius: '8px',
+                    border: '1px solid var(--border-subtle)', fontSize: '13px', color: 'var(--text-secondary)'
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Miembro desde</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Calendar size={14} />
+                      {formatDate(userCreationDate)}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {settingsSuccess && <div className="login-success">{settingsSuccess}</div>}
               {settingsError && <div className="login-error">{settingsError}</div>}
