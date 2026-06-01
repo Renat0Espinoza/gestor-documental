@@ -10,7 +10,7 @@ import {
 import Login from './Login';
 import { auth, db } from './firebase'; // <-- Modificado para incluir db
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc, setDoc, deleteDoc, addDoc, query, where, orderBy, limit } from 'firebase/firestore'; // <-- Funciones de Firestore
+import { doc, getDoc, collection, getDocs, updateDoc, deleteDoc, addDoc } from 'firebase/firestore'; // <-- Funciones de Firestore
 
 interface FileInfo {
   name: string;
