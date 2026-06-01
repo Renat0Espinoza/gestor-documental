@@ -3,26 +3,18 @@ import axios from 'axios';
 import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
-  FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
-  Filter, Users, History, Shield, Eye, Bookmark, RotateCcw
+  ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
+  Filter, Users, History, Shield, Eye
 } from 'lucide-react';
 import Login from './Login';
-import { auth, db } from './firebase';
+import { auth, db } from './firebase'; // <-- Modificado para incluir db
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc } from 'firebase/firestore'; // <-- Funciones de Firestore
 
 interface FileInfo {
   name: string;
   size: number;
   modified: string | null;
-  categoria?: string;
-}
-
-interface UserInfo {
-  id: string;
-  nombre: string;
-  correo: string;
-  rol: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -40,124 +32,88 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-type Vista = 'dashboard' | 'archivos' | 'configuracion' | 'usuarios' | 'historial' | 'categorias' | 'papelera';
+// <-- Modificado: Añadidas las vistas del admin
+type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial';
 
-export default function App() {
-  const [user, setUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<'admin' | 'colaborador' | 'lector'>('lector');
-  const [listaUsuarios, setListaUsuarios] = useState<UserInfo[]>([]);
-
-  // Archivos y Papelera
-  const [files, setFiles] = useState<FileInfo[]>([]);
-  const [papelera, setPapelera] = useState<FileInfo[]>([]);
-
-  // Categorías
-  const [categorias, setCategorias] = useState<string[]>(['General', 'Planificaciones', 'Informes Técnicos', 'Finanzas']);
-  const [nuevaCategoria, setNuevaCategoria] = useState('');
-
-  // Búsqueda y Filtros
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [status, setStatus] = useState<{ connected: boolean; message: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [vistaActual, setVistaActual] = useState<Vista>('dashboard');
+  const [listaArchivos, setListaArchivos] = useState<FileInfo[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterExt, setFilterExt] = useState('all');
-  const [filterSize, setFilterSize] = useState('all');
-  const [filterCat, setFilterCat] = useState('all');
+  const [searchResults, setSearchResults] = useState<FileInfo[]>([]);
+  const [searching, setSearching] = useState(false);
 
-  // Historial
-  const [historyLogs, setHistoryLogs] = useState([
-    { id: 1, usuario: 'Sistema', accion: 'Sistema iniciado', documento: 'N/A', fecha: new Date().toISOString() }
+  // --- NUEVOS ESTADOS (Roles, Filtros y Auditoría) ---
+  const [userRole, setUserRole] = useState<'admin' | 'colaborador' | 'lector'>('lector');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [filterExtension, setFilterExtension] = useState('all');
+  const [filterSize, setFilterSize] = useState('all');
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [historyLogs, setHistoryLogs] = useState<any[]>([
+    { id: 1, usuario: 'Sistema', accion: 'Auditoría inicializada', documento: 'N/A', fecha: new Date().toISOString() }
   ]);
 
-  const [status, setStatus] = useState<{ connected: boolean, message: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [vista, setVista] = useState<Vista>('dashboard');
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-
-  // Configuración de Perfil
-  const [activeTab, setActiveTab] = useState<'profile' | 'security'>('profile');
+  // --- Estado de perfil ---
   const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
+  const [newDisplayName, setNewDisplayName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [profileSuccess, setProfileSuccess] = useState('');
-  const [profileError, setProfileError] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [settingsSuccess, setSettingsSuccess] = useState('');
+  const [settingsError, setSettingsError] = useState('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const API_BASE = '';
 
   const checkGithub = async () => {
+    setLoading(true);
     try {
-      const response = await axios.get('http://localhost:3000/api/github/status');
-      setStatus(response.data);
-    } catch (error) {
-      setStatus({ connected: false, message: 'No se pudo conectar' });
+      const res = await axios.get(`${API_BASE}/api/github-status`);
+      setStatus(res.data);
+    } catch {
+      setStatus({ connected: false, message: 'Error al contactar GitHub' });
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    checkGithub();
-    const unsub = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        // Resuelve el problema del nombre al extraer los datos actualizados directo de Firestore
+    if (isAuthenticated) checkGithub();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    // <-- Modificado a función asíncrona para obtener el rol de Firestore
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setDisplayName(user.displayName || '');
+        setIsAuthenticated(true);
+
         try {
-          const docRef = doc(db, "users", currentUser.uid);
+          const docRef = doc(db, "users", user.uid);
           const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const userData = docSnap.data();
-            setUserRole(userData.rol || 'lector');
-            setDisplayName(userData.nombre || currentUser.displayName || '');
-            setEmail(userData.correo || currentUser.email || '');
+          if (docSnap.exists() && docSnap.data().rol) {
+            setUserRole(docSnap.data().rol);
           } else {
-            await setDoc(docRef, { nombre: currentUser.displayName, correo: currentUser.email, rol: 'lector' });
-            setUserRole('lector');
-            setDisplayName(currentUser.displayName || '');
-            setEmail(currentUser.email || '');
+            setUserRole('lector'); // Por defecto para evitar problemas
           }
-        } catch (e) {
-          console.error("Error obteniendo rol:", e);
+        } catch (error) {
+          console.error("Error al obtener rol:", error);
+          setUserRole('lector');
         }
-      } else {
-        setUser(null);
-        setUserRole('lector');
       }
-      setLoading(false);
     });
-
-    setFiles([
-      { name: 'documento_requisitos_v2.pdf', size: 2450000, modified: new Date().toISOString(), categoria: 'Informes Técnicos' },
-      { name: 'acta_reunion_cliente.docx', size: 1024000, modified: new Date(Date.now() - 86400000).toISOString(), categoria: 'General' },
-      { name: 'presupuesto_2024.xlsx', size: 512000, modified: new Date(Date.now() - 172800000).toISOString(), categoria: 'Finanzas' }
-    ]);
-
-    return () => unsub();
+    return () => unsubscribe();
   }, []);
 
-  const cargarUsuarios = async () => {
-    try {
-      const querySnapshot = await getDocs(collection(db, 'users'));
-      const users: UserInfo[] = [];
-      querySnapshot.forEach((docSnap) => {
-        users.push({ id: docSnap.id, ...docSnap.data() } as UserInfo);
-      });
-      setListaUsuarios(users);
-    } catch (err) { console.error(err); }
-  };
-
-  const cambiarRol = async (id: string, nuevoRol: string) => {
-    if (id === user?.uid) {
-      alert("No puedes modificar tu propio rango jerárquico por seguridad.");
-      return;
-    }
-    try {
-      await updateDoc(doc(db, 'users', id), { rol: nuevoRol });
-      cargarUsuarios();
-      registrarAuditoria(`Cambió rol a ${nuevoRol.toUpperCase()}`, `User ID: ${id}`);
-    } catch (err) { alert("Error al cambiar el rol"); }
-  };
-
+  // --- REGISTRO DE AUDITORÍA (HU4) ---
   const registrarAuditoria = (accion: string, documento: string) => {
     const newLog = {
       id: Date.now(),
-      usuario: displayName || user?.email || 'Usuario',
+      usuario: auth.currentUser?.displayName || auth.currentUser?.email || 'Usuario',
       accion,
       documento,
       fecha: new Date().toISOString()
@@ -165,238 +121,406 @@ export default function App() {
     setHistoryLogs(prev => [newLog, ...prev]);
   };
 
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    if (userRole === 'lector') return;
-    if (e.type === 'dragenter' || e.type === 'dragover') setIsDragging(true);
-    else if (e.type === 'dragleave') setIsDragging(false);
-  };
+  // --- SUBIDA DE ARCHIVOS ---
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    if (userRole === 'lector') return;
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFiles(e.dataTransfer.files);
-  };
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) handleFiles(e.target.files);
-  };
+    if (file.type !== 'application/pdf') {
+      alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
+      return;
+    }
 
-  const handleFiles = (newFiles: FileList) => {
-    setUploading(true);
-    setTimeout(() => {
-      const newFilesArray = Array.from(newFiles).map(file => {
-        registrarAuditoria('Subió el archivo', file.name);
-        return { name: file.name, size: file.size, modified: new Date().toISOString(), categoria: 'General' };
+    if (file.size > MAX_FILE_SIZE) {
+      alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('documento', file);
+
+    try {
+      const response = await axios.post(`${API_BASE}/api/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setFiles(prev => [...newFilesArray, ...prev]);
-      setUploading(false);
-      setVista('archivos');
-    }, 1500);
-  };
-
-  const cambiarCategoriaArchivo = (fileName: string, nuevaCategoria: string) => {
-    setFiles(prev => prev.map(f => f.name === fileName ? { ...f, categoria: nuevaCategoria } : f));
-    registrarAuditoria(`Asignó categoría ${nuevaCategoria}`, fileName);
-  };
-
-  const agregarCategoria = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nuevaCategoria.trim()) return;
-    if (!categorias.includes(nuevaCategoria.trim())) {
-      setCategorias(prev => [...prev, nuevaCategoria.trim()]);
-      registrarAuditoria('Creó nueva categoría', nuevaCategoria.trim());
-      setNuevaCategoria('');
-    } else {
-      alert("La categoría ya existe.");
-    }
-  };
-
-  // Papelera de reciclaje
-  const moverAPapelera = (fileName: string) => {
-    if (userRole === 'lector') return;
-    if (confirm(`¿Deseas enviar "${fileName}" a la papelera?`)) {
-      const archivo = files.find(f => f.name === fileName);
-      if (archivo) {
-        setFiles(prev => prev.filter(f => f.name !== fileName));
-        setPapelera(prev => [archivo, ...prev]);
-        registrarAuditoria('Movió a la papelera', fileName);
+      alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
+      registrarAuditoria('Subió el archivo', response.data.file || file.name); // <-- Registro de subida
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err) && err.response?.status === 413) {
+        alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+      } else {
+        alert('❌ Hubo un error al intentar subir el archivo al servidor.');
       }
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const restaurarArchivo = (fileName: string) => {
-    const archivo = papelera.find(f => f.name === fileName);
-    if (archivo) {
-      setPapelera(prev => prev.filter(f => f.name !== fileName));
-      setFiles(prev => [archivo, ...prev]);
-      registrarAuditoria('Restauró desde la papelera', fileName);
+  // --- EXPLORADOR ---
+  const abrirExplorador = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/files`);
+      setListaArchivos(response.data);
+      setVistaActual('explorador');
+    } catch {
+      alert('❌ Error al conectar con el servidor para ver los archivos.');
     }
   };
 
-  const eliminarDefinitivo = (fileName: string) => {
-    if (confirm(`⚠️ ALERTA DEFINITIVA: ¿Estás seguro de eliminar ${fileName} para siempre? Esta acción no se puede deshacer.`)) {
-      setPapelera(prev => prev.filter(f => f.name !== fileName));
-      registrarAuditoria('Eliminó permanentemente', fileName);
-    }
+  // --- BÚSQUEDA ---
+  const abrirBusqueda = () => {
+    setSearchQuery('');
+    setSearchResults([]);
+    setVistaActual('busqueda');
   };
 
-  const filteredFiles = files.filter(f => {
-    const matchQuery = f.name.toLowerCase().includes(searchQuery.toLowerCase());
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await axios.get(`${API_BASE}/api/search`, { params: { q: query } });
+        setSearchResults(res.data);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+  };
+
+  // --- LÓGICA FILTROS AVANZADOS (HU1) ---
+  const filteredSearchResults = searchResults.filter(f => {
     let matchExt = true;
-    if (filterExt !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExt}`);
-    let matchCat = true;
-    if (filterCat !== 'all') matchCat = f.categoria === filterCat;
+    if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
+
     let matchSize = true;
     if (filterSize !== 'all') {
-      if (filterSize === 'small') matchSize = f.size < 1024 * 1024;
-      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
-      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
+      if (filterSize === 'small') matchSize = f.size < 1024 * 1024; // < 1MB
+      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024; // 1-5MB
+      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024; // > 5MB
     }
-    return matchQuery && matchExt && matchCat && matchSize;
+    return matchExt && matchSize;
   });
 
-  const handleProfileUpdate = async (e: React.FormEvent) => {
+  const handleDownload = (filename: string) => {
+    registrarAuditoria('Descargó el archivo', filename); // <-- Registro de descarga
+    window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
+  };
+
+  // --- CONFIGURACIÓN ---
+  const abrirConfiguracion = () => {
+    setNewDisplayName(displayName);
+    setNewEmail(auth.currentUser?.email || '');
+    setNewPassword('');
+    setCurrentPassword('');
+    setSettingsSuccess('');
+    setSettingsError('');
+    setVistaActual('configuracion');
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setProfileError(''); setProfileSuccess('');
+    setSettingsSuccess('');
+    setSettingsError('');
     if (!auth.currentUser) return;
 
     try {
-      // Si cambia email exige reautenticación
-      if (email !== auth.currentUser.email) {
+      const needsReauth = (newEmail !== auth.currentUser.email) || newPassword.length > 0;
+      if (needsReauth) {
         if (!currentPassword) {
-          setProfileError('Debes ingresar tu contraseña actual para cambiar el correo.');
+          setSettingsError('Debes ingresar tu contraseña actual para cambiar el correo o la contraseña.');
           return;
         }
         const credential = EmailAuthProvider.credential(auth.currentUser.email!, currentPassword);
         await reauthenticateWithCredential(auth.currentUser, credential);
-        await updateEmail(auth.currentUser, email);
-        await updateDoc(doc(db, 'users', auth.currentUser.uid), { correo: email });
       }
 
-      if (displayName !== auth.currentUser.displayName) {
-        await updateProfile(auth.currentUser, { displayName });
-        await updateDoc(doc(db, 'users', auth.currentUser.uid), { nombre: displayName });
+      if (newDisplayName.trim() !== displayName) {
+        await updateProfile(auth.currentUser, { displayName: newDisplayName.trim() });
+        setDisplayName(newDisplayName.trim());
       }
 
-      setProfileSuccess('✅ Perfil actualizado correctamente.');
+      if (newEmail !== auth.currentUser.email) {
+        await updateEmail(auth.currentUser, newEmail);
+      }
+
+      if (newPassword.length > 0) {
+        await updatePassword(auth.currentUser, newPassword);
+      }
+
+      setSettingsSuccess('✅ Perfil actualizado correctamente.');
       setCurrentPassword('');
+      setNewPassword('');
     } catch (err: any) {
-      setProfileError('Error al actualizar datos. Verifica tu contraseña.');
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setSettingsError('La contraseña actual es incorrecta.');
+      } else if (err.code === 'auth/email-already-in-use') {
+        setSettingsError('Este correo electrónico ya está en uso.');
+      } else if (err.code === 'auth/weak-password') {
+        setSettingsError('La nueva contraseña debe tener al menos 6 caracteres.');
+      } else if (err.code === 'auth/requires-recent-login') {
+        setSettingsError('Por seguridad, cierra sesión y vuelve a iniciar antes de hacer este cambio.');
+      } else {
+        setSettingsError('Ocurrió un error al actualizar el perfil.');
+        console.error(err);
+      }
     }
   };
 
-  const handlePasswordUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setProfileError(''); setProfileSuccess('');
-    if (!auth.currentUser) return;
+  // --- ELIMINAR ARCHIVO (doble confirmación) ---
+  const handleDelete = async (filename: string) => {
+    if (userRole === 'lector') return; // Bloqueo de seguridad
+
+    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
+    if (!primera) return;
+
+    const segunda = confirm('⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?');
+    if (!segunda) return;
+
     try {
-      const credential = EmailAuthProvider.credential(auth.currentUser.email!, currentPassword);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await updatePassword(auth.currentUser, newPassword);
-      setProfileSuccess('✅ Contraseña cambiada con éxito.');
-      setCurrentPassword(''); setNewPassword('');
-    } catch (err) {
-      setProfileError('La contraseña actual es incorrecta o hay un error.');
+      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
+      alert('🗑️ Archivo eliminado correctamente.');
+      registrarAuditoria('Eliminó el archivo', filename); // <-- Registro
+      const response = await axios.get(`${API_BASE}/api/files`);
+      setListaArchivos(response.data);
+    } catch {
+      alert('❌ Error al intentar eliminar el archivo.');
     }
   };
 
-  if (loading) return <div className="loading-screen" style={{ color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-primary)' }}>Cargando Gestor...</div>;
-  if (!user) return <Login onLoginSuccess={() => { }} />;
+  // --- FUNCIONES ADMIN (HU2) ---
+  const cargarUsuarios = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'users'));
+      const users: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        users.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setUsersList(users);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const cambiarRol = async (id: string, nuevoRol: string) => {
+    try {
+      await updateDoc(doc(db, 'users', id), { rol: nuevoRol });
+      cargarUsuarios();
+      registrarAuditoria(`Cambió rol a ${nuevoRol.toUpperCase()}`, `Usuario ID: ${id}`);
+      alert('✅ Rol actualizado correctamente.');
+    } catch (err) {
+      alert("Error al cambiar el rol");
+    }
+  };
+
+  // --- COMPONENTE DE LISTA DE ARCHIVOS REUTILIZABLE ---
+  const renderFileList = (files: FileInfo[]) => (
+    <div className="file-list">
+      {files.map((archivo, index) => (
+        <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
+          <div className="file-icon">
+            <FileText size={20} color="#f87171" />
+          </div>
+          <div className="file-info">
+            <div className="file-name">{archivo.name}</div>
+            <div className="file-meta">
+              {formatFileSize(archivo.size)}
+              {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+            </div>
+          </div>
+          <div className="file-actions">
+            <button className="file-download" onClick={() => handleDownload(archivo.name)}>
+              <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+              Descargar
+            </button>
+            {/* HU3: Ocultar botón eliminar para Lectores */}
+            {userRole !== 'lector' && (
+              <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Eliminar archivo">
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // --- AUTH GATE ---
+  if (!isAuthenticated) {
+    return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <div className="app-layout">
-      {/* ===== SIDEBAR ORIGINAL INTACTO ===== */}
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          <div className="logo-icon"><FileText size={24} color="#fff" /></div>
-          <span>Gestor UBB</span>
+      {/* HEADER */}
+      <header className="app-header">
+        <div>
+          <h1>Gestión Documental</h1>
+          <div className="header-sub">Panel de Administración</div>
         </div>
+        <button onClick={() => { setIsAuthenticated(false); signOut(auth); }} className="btn-logout" title="Cerrar Sesión">
+          <LogOut size={16} /> Salir
+        </button>
+      </header>
 
-        <nav className="sidebar-nav">
-          <button onClick={() => setVista('dashboard')} className={`nav-item ${vista === 'dashboard' ? 'active' : ''}`}>
-            <FolderOpen size={20} /><span>Dashboard</span>
-          </button>
-          <button onClick={() => setVista('archivos')} className={`nav-item ${vista === 'archivos' ? 'active' : ''}`}>
-            <UploadCloud size={20} /><span>Mis Archivos</span>
-          </button>
-          <button onClick={() => setVista('papelera')} className={`nav-item ${vista === 'papelera' ? 'active' : ''}`}>
-            <Trash2 size={20} /><span>Papelera ({papelera.length})</span>
-          </button>
+      <main className="app-main">
+        {/* HIDDEN FILE INPUT */}
+        <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
 
-          {/* Opciones exclusivas de Admin */}
-          {userRole === 'admin' && (
-            <>
-              <button onClick={() => { setVista('usuarios'); cargarUsuarios(); }} className={`nav-item ${vista === 'usuarios' ? 'active' : ''}`}>
-                <Users size={20} /><span>Gestión de Usuarios</span>
+        {/* === DASHBOARD === */}
+        {vistaActual === 'dashboard' && (
+          <>
+            {displayName && (
+              <div className="welcome-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span className="welcome-wave">👋</span>
+                  <span>Bienvenid@ <strong>{displayName}</strong></span>
+                </div>
+                {/* LEYENDA VISTA DE ROL */}
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '8px',
+                  background: userRole === 'admin' ? 'rgba(79, 140, 255, 0.1)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                  border: `1px solid ${userRole === 'admin' ? 'rgba(79, 140, 255, 0.3)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
+                  padding: '6px 14px', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 'bold'
+                }}>
+                  {userRole === 'admin' ? <Shield size={16} /> : userRole === 'colaborador' ? <User size={16} /> : <Eye size={16} />}
+                  Vista de {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
+                </div>
+              </div>
+            )}
+            <div className="section-title">Acciones Rápidas</div>
+            <div className="card-grid">
+
+              {/* HU3: Ocultar Tarjeta Subir para Lectores */}
+              {userRole !== 'lector' && (
+                <button className="action-card" onClick={() => fileInputRef.current?.click()}>
+                  <div className="card-icon blue">
+                    <UploadCloud size={26} color="#4f8cff" />
+                  </div>
+                  <h3>Subir Documento</h3>
+                  <p>Cargar nuevos archivos PDF al sistema (limite 10mb)</p>
+                </button>
+              )}
+
+              <button className="action-card" onClick={abrirExplorador}>
+                <div className="card-icon green">
+                  <FolderOpen size={26} color="#34d399" />
+                </div>
+                <h3>Explorar Archivos</h3>
+                <p>Ver listado de documentos guardados</p>
               </button>
-              <button onClick={() => setVista('categorias')} className={`nav-item ${vista === 'categorias' ? 'active' : ''}`}>
-                <Bookmark size={20} /><span>Categorías</span>
-              </button>
-              <button onClick={() => setVista('historial')} className={`nav-item ${vista === 'historial' ? 'active' : ''}`}>
-                <History size={20} /><span>Historial y Auditoría</span>
-              </button>
-            </>
-          )}
 
-          <div className="nav-divider"></div>
-          <button onClick={() => { setVista('configuracion'); setActiveTab('profile'); }} className={`nav-item ${vista === 'configuracion' ? 'active' : ''}`}>
-            <Settings size={20} /><span>Configuración</span>
-          </button>
-        </nav>
+              <button className="action-card" onClick={abrirBusqueda}>
+                <div className="card-icon amber">
+                  <Search size={26} color="#fbbf24" />
+                </div>
+                <h3>Buscar</h3>
+                <p>Encontrar archivos por nombre</p>
+              </button>
 
-        <div className="sidebar-footer">
-          <div className="user-info" style={{ cursor: 'pointer' }} onClick={() => { setVista('configuracion'); setActiveTab('profile'); }}>
-            <div className="user-name">{displayName}</div>
-            <div className="user-role" style={{ fontSize: '11px', color: 'var(--accent-blue)', textTransform: 'uppercase', fontWeight: 700 }}>
-              {userRole}
+              <button className="action-card" onClick={abrirConfiguracion}>
+                <div className="card-icon purple">
+                  <Settings size={26} color="#a78bfa" />
+                </div>
+                <h3>Configuración</h3>
+                <p>Ajustes del sistema y conexión</p>
+              </button>
+
+              {/* HU2 y HU4: Tarjetas Exclusivas Administrador */}
+              {userRole === 'admin' && (
+                <>
+                  <button className="action-card" onClick={() => { cargarUsuarios(); setVistaActual('usuarios'); }}>
+                    <div className="card-icon" style={{ background: 'rgba(244, 114, 182, 0.1)' }}>
+                      <Users size={26} color="#f472b6" />
+                    </div>
+                    <h3>Gestión Roles</h3>
+                    <p>Asignar permisos a usuarios</p>
+                  </button>
+
+                  <button className="action-card" onClick={() => setVistaActual('historial')}>
+                    <div className="card-icon" style={{ background: 'rgba(79, 140, 255, 0.1)' }}>
+                      <History size={26} color="#4f8cff" />
+                    </div>
+                    <h3>Auditoría</h3>
+                    <p>Historial de cambios del sistema</p>
+                  </button>
+                </>
+              )}
             </div>
-          </div>
-          <button onClick={() => signOut(auth)} className="btn-icon" title="Cerrar sesión">
-            <LogOut size={18} />
-          </button>
-        </div>
-      </aside>
+          </>
+        )}
 
-      {/* ===== CONTENIDO PRINCIPAL ORIGINAL INTACTO ===== */}
-      <main className="main-content">
-        <header className="main-header">
-          {/* Búsqueda Avanzada Inyectada en el buscador original */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div className="search-bar" style={{ marginBottom: 0 }}>
-              <Search size={18} color="var(--text-muted)" />
+        {/* === EXPLORADOR === */}
+        {vistaActual === 'explorador' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Archivos Subidos</h2>
+              <span className="badge">{listaArchivos.length}</span>
+            </div>
+
+            {listaArchivos.length === 0 ? (
+              <div className="empty-state">
+                <Inbox size={48} />
+                <p>No hay documentos en la bodega aún.</p>
+              </div>
+            ) : (
+              renderFileList(listaArchivos)
+            )}
+          </div>
+        )}
+
+        {/* === BÚSQUEDA Y FILTROS AVANZADOS === */}
+        {vistaActual === 'busqueda' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Buscar Documentos</h2>
+            </div>
+
+            <div className="search-bar">
+              <Search size={20} />
               <input
                 type="text"
-                placeholder="Buscar documentos..."
+                placeholder="Escribe el nombre del archivo..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => handleSearch(e.target.value)}
+                autoFocus
               />
               <button
-                onClick={() => setShowFilters(!showFilters)}
-                className="btn-icon"
-                style={{ background: showFilters ? 'rgba(79,140,255,0.1)' : 'transparent', color: showFilters ? 'var(--accent-blue)' : 'var(--text-muted)' }}
+                onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                title="Filtros Avanzados"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: showAdvancedFilters ? '#4f8cff' : 'var(--text-muted)' }}
               >
-                <Filter size={18} />
+                <Filter size={20} />
               </button>
+              {searching && <RefreshCcw size={16} className="spin-icon" style={{ color: 'var(--text-muted)', marginLeft: 8 }} />}
             </div>
 
-            {showFilters && (
-              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+            {showAdvancedFilters && (
+              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
                   <span>Extensión:</span>
-                  <select value={filterExt} onChange={(e) => setFilterExt(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                  <select value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
                     <option value="all">Todas</option>
                     <option value="pdf">.pdf</option>
                     <option value="docx">.docx</option>
                     <option value="xlsx">.xlsx</option>
-                  </select>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <span>Categoría:</span>
-                  <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
-                    <option value="all">Todas</option>
-                    {categorias.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -410,185 +534,49 @@ export default function App() {
                 </div>
               </div>
             )}
-          </div>
 
-          {userRole !== 'lector' && (
-            <div className="header-actions" style={{ marginLeft: '20px' }}>
-              <button className="btn-primary" onClick={() => fileInputRef.current?.click()}>
-                <UploadCloud size={18} style={{ marginRight: '8px' }} />
-                Subir Archivo
-              </button>
-              <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileInput} multiple />
-            </div>
-          )}
-        </header>
-
-        {vista === 'dashboard' && (
-          <div className="view-container">
-            <div className="view-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <h2>Bienvenido, {displayName}</h2>
-                <p>Aquí tienes un resumen de tu actividad reciente.</p>
+            {!searchQuery.trim() && !showAdvancedFilters ? (
+              <div className="empty-state">
+                <Search size={48} />
+                <p>Escribe un término para buscar entre tus documentos.</p>
               </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '8px',
-                background: userRole === 'admin' ? 'rgba(79, 140, 255, 0.1)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.1)' : 'rgba(255, 255, 255, 0.05)',
-                border: `1px solid ${userRole === 'admin' ? 'rgba(79, 140, 255, 0.3)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
-                padding: '8px 16px', borderRadius: '12px', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600
-              }}>
-                {userRole === 'admin' ? <Shield size={18} color="var(--accent-blue)" /> : userRole === 'colaborador' ? <User size={18} color="var(--accent-green)" /> : <Eye size={18} color="var(--text-secondary)" />}
-                Vista de {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
-              </div>
-            </div>
-
-            {userRole !== 'lector' ? (
-              <div
-                className={`upload-zone ${isDragging ? 'dragging' : ''}`}
-                onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <div className="upload-icon-wrapper">
-                  {uploading ? <RefreshCcw size={32} className="spin-icon" color="var(--accent-blue)" /> : <Inbox size={32} color="var(--text-muted)" />}
-                </div>
-                <h3>{uploading ? 'Subiendo archivos...' : 'Sube un archivo a tu espacio'}</h3>
-                <p>Arrastra y suelta tus archivos aquí o haz clic para explorar</p>
+            ) : filteredSearchResults.length === 0 && !searching ? (
+              <div className="empty-state">
+                <Inbox size={48} />
+                <p>No se encontraron archivos con esos filtros y término.</p>
               </div>
             ) : (
-              <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', padding: '24px', borderRadius: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                <Eye size={32} style={{ opacity: 0.5, marginBottom: '10px' }} />
-                <h3>Modo de Lectura Activo</h3>
-                <p style={{ fontSize: '14px' }}>Tienes acceso para visualizar y descargar documentos de forma segura sin modificar datos.</p>
-              </div>
+              renderFileList(filteredSearchResults)
             )}
           </div>
         )}
 
-        {vista === 'archivos' && (
-          <div className="view-container">
-            <div className="view-header">
-              <h2>Mis Archivos</h2>
-              <p>Gestiona todos tus documentos ({filteredFiles.length} resultados)</p>
+        {/* === USUARIOS (HU2 - Solo Admin) === */}
+        {vistaActual === 'usuarios' && userRole === 'admin' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Gestión de Permisos</h2>
             </div>
-
-            <div className="files-grid">
-              {filteredFiles.map((file, index) => (
-                <div key={index} className="file-card">
-                  <div className="file-icon"><FileText size={24} color="var(--accent-blue)" /></div>
-                  <div className="file-info">
-                    <h4>{file.name}</h4>
-                    <p>{formatFileSize(file.size)} • {formatDate(file.modified)}</p>
-                    {/* Control de Categorías */}
-                    {userRole !== 'lector' ? (
-                      <select
-                        value={file.categoria || 'General'}
-                        onChange={(e) => cambiarCategoriaArchivo(file.name, e.target.value)}
-                        style={{ marginTop: '8px', background: 'var(--bg-input)', color: '#fff', border: '1px solid var(--border-subtle)', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', outline: 'none' }}
-                      >
-                        {categorias.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    ) : (
-                      <span style={{ display: 'inline-block', marginTop: '8px', fontSize: '11px', color: 'var(--accent-blue)' }}>📂 {file.categoria || 'General'}</span>
-                    )}
-                  </div>
-                  <div className="file-actions">
-                    <button className="btn-icon" title="Descargar" onClick={() => { registrarAuditoria('Descargó el archivo', file.name); alert('Iniciando descarga simulada...'); }}><Download size={16} /></button>
-                    {userRole !== 'lector' && (
-                      <button className="btn-icon danger" title="Mover a papelera" onClick={() => moverAPapelera(file.name)}><Trash2 size={16} /></button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {filteredFiles.length === 0 && (
-                <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', gridColumn: '1 / -1' }}>No se encontraron archivos.</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* --- NUEVA VISTA: PAPELERA DE RECICLAJE --- */}
-        {vista === 'papelera' && (
-          <div className="view-container">
-            <div className="view-header">
-              <h2>Papelera de Reciclaje</h2>
-              <p>Restaurar o eliminar permanentemente tus documentos ({papelera.length} resultados).</p>
-            </div>
-            <div className="files-grid">
-              {papelera.map((file, index) => (
-                <div key={index} className="file-card" style={{ opacity: 0.8 }}>
-                  <div className="file-icon"><Trash2 size={24} color="var(--text-muted)" /></div>
-                  <div className="file-info">
-                    <h4 style={{ textDecoration: 'line-through' }}>{file.name}</h4>
-                    <p>{formatFileSize(file.size)} • 📂 {file.categoria || 'General'}</p>
-                  </div>
-                  <div className="file-actions">
-                    <button className="btn-icon" title="Restaurar" onClick={() => restaurarArchivo(file.name)}>
-                      <RotateCcw size={16} color="var(--accent-green)" />
-                    </button>
-                    <button className="btn-icon danger" title="Eliminar definitivamente" onClick={() => eliminarDefinitivo(file.name)}>
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {papelera.length === 0 && (
-                <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', gridColumn: '1 / -1' }}>La papelera está vacía.</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* --- NUEVA VISTA: CATEGORÍAS (ADMIN) --- */}
-        {vista === 'categorias' && userRole === 'admin' && (
-          <div className="view-container">
-            <div className="view-header">
-              <h2>Gestión de Categorías</h2>
-              <p>Añade nuevas categorías para la clasificación de los documentos.</p>
-            </div>
-
-            <form onSubmit={agregarCategoria} style={{ display: 'flex', gap: '15px', marginBottom: '30px' }}>
-              <input
-                type="text"
-                value={nuevaCategoria}
-                onChange={(e) => setNuevaCategoria(e.target.value)}
-                placeholder="Escribe una nueva categoría..."
-                style={{ padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: '#fff', flex: 1, outline: 'none' }}
-                required
-              />
-              <button type="submit" className="btn-primary" style={{ height: '44px' }}>Añadir</button>
-            </form>
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-              {categorias.map(cat => (
-                <div key={cat} style={{ padding: '10px 20px', background: 'var(--bg-secondary)', border: '1px solid var(--border-card)', borderRadius: '20px', color: 'var(--text-primary)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Bookmark size={16} color="var(--accent-blue)" /> {cat}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {vista === 'usuarios' && userRole === 'admin' && (
-          <div className="view-container">
-            <div className="view-header">
-              <h2>Gestión de Usuarios</h2>
-              <p>Administra los roles y niveles de acceso del sistema</p>
-            </div>
-            <div className="files-grid" style={{ display: 'block' }}>
-              <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', color: 'var(--text-primary)' }}>
+            <div style={{ background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+              <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', color: 'var(--text-primary)', fontSize: '14px' }}>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-card)' }}>
-                    <th style={{ padding: '15px' }}>Nombre</th>
-                    <th style={{ padding: '15px' }}>Correo Electrónico</th>
-                    <th style={{ padding: '15px' }}>Rol Actual</th>
-                    <th style={{ padding: '15px' }}>Cambiar a</th>
+                  <tr style={{ borderBottom: '1px solid var(--border-card)', background: 'var(--bg-glass)' }}>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Nombre / Correo</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Rol Actual</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Cambiar a</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {listaUsuarios.map(u => (
+                  {usersList.map(u => (
                     <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '15px', fontWeight: 500 }}>{u.nombre}</td>
-                      <td style={{ padding: '15px', color: 'var(--text-secondary)' }}>{u.correo}</td>
-                      <td style={{ padding: '15px' }}>
+                      <td style={{ padding: '12px 16px' }}>
+                        <div>{u.nombre || 'Sin nombre'}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{u.correo || u.email}</div>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
                         <span style={{
                           padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
                           backgroundColor: u.rol === 'admin' ? 'rgba(79, 140, 255, 0.15)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255, 255, 255, 0.05)',
@@ -596,11 +584,10 @@ export default function App() {
                           border: `1px solid ${u.rol === 'admin' ? 'rgba(79, 140, 255, 0.3)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`
                         }}>{u.rol}</span>
                       </td>
-                      <td style={{ padding: '15px' }}>
+                      <td style={{ padding: '12px 16px' }}>
                         <select
                           value={u.rol} onChange={(e) => cambiarRol(u.id, e.target.value)}
-                          disabled={u.id === user?.uid}
-                          style={{ background: 'var(--bg-input)', color: u.id === user?.uid ? 'var(--text-muted)' : 'white', border: '1px solid var(--border-card)', padding: '6px 12px', borderRadius: '6px', cursor: u.id === user?.uid ? 'not-allowed' : 'pointer', outline: 'none' }}
+                          style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px' }}
                         >
                           <option value="admin">Administrador</option>
                           <option value="colaborador">Colaborador</option>
@@ -615,33 +602,36 @@ export default function App() {
           </div>
         )}
 
-        {vista === 'historial' && userRole === 'admin' && (
-          <div className="view-container">
-            <div className="view-header">
+        {/* === HISTORIAL (HU4 - Solo Admin) === */}
+        {vistaActual === 'historial' && userRole === 'admin' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
               <h2>Historial y Auditoría</h2>
-              <p>Trazabilidad de todos los cambios realizados en el sistema.</p>
             </div>
-            <div className="files-grid" style={{ display: 'block', overflow: 'hidden', padding: 0 }}>
-              <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', color: 'var(--text-primary)' }}>
+            <div style={{ background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+              <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', color: 'var(--text-primary)', fontSize: '14px' }}>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-card)', background: 'var(--bg-secondary)' }}>
-                    <th style={{ padding: '15px' }}>Fecha</th>
-                    <th style={{ padding: '15px' }}>Usuario</th>
-                    <th style={{ padding: '15px' }}>Acción</th>
-                    <th style={{ padding: '15px' }}>Documento / Recurso</th>
+                  <tr style={{ borderBottom: '1px solid var(--border-card)', background: 'var(--bg-glass)' }}>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Fecha</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Usuario</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Acción</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Documento</th>
                   </tr>
                 </thead>
                 <tbody>
                   {historyLogs.map(log => (
                     <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '15px', color: 'var(--text-muted)', fontSize: '13px' }}>{formatDate(log.fecha)}</td>
-                      <td style={{ padding: '15px', fontWeight: 500 }}>{log.usuario}</td>
-                      <td style={{ padding: '15px' }}>
+                      <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
+                      <td style={{ padding: '12px 16px' }}>{log.usuario}</td>
+                      <td style={{ padding: '12px 16px' }}>
                         <span style={{ color: log.accion.includes('Eliminó') ? '#f87171' : log.accion.includes('Subió') ? '#34d399' : 'var(--text-secondary)' }}>
                           {log.accion}
                         </span>
                       </td>
-                      <td style={{ padding: '15px', color: 'var(--accent-blue)' }}>{log.documento}</td>
+                      <td style={{ padding: '12px 16px', color: '#4f8cff' }}>{log.documento}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -650,61 +640,94 @@ export default function App() {
           </div>
         )}
 
-        {/* --- CONFIGURACIÓN DE PERFIL INTACTA --- */}
-        {vista === 'configuracion' && (
-          <div className="view-container">
-            <div className="view-header">
-              <h2>Configuración de Cuenta</h2>
-              <p>Administra tu información personal y seguridad</p>
+        {/* === CONFIGURACIÓN === */}
+        {vistaActual === 'configuracion' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Configuración</h2>
             </div>
-            <div className="settings-container">
-              <div className="settings-tabs">
-                <button className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')}><User size={18} /> Información Personal</button>
-                <button className={`tab-btn ${activeTab === 'security' ? 'active' : ''}`} onClick={() => setActiveTab('security')}><Lock size={18} /> Seguridad</button>
-              </div>
 
-              {profileError && <div style={{ color: '#f87171', background: 'rgba(248, 113, 113, 0.1)', padding: '10px', borderRadius: '4px', marginBottom: '15px', marginTop: '15px' }}>{profileError}</div>}
-              {profileSuccess && <div style={{ color: '#34d399', background: 'rgba(52, 211, 153, 0.1)', padding: '10px', borderRadius: '4px', marginBottom: '15px', marginTop: '15px' }}>{profileSuccess}</div>}
+            <div className="settings-section">
+              <h3 className="settings-section-title">Perfil de Usuario</h3>
 
-              <form className="settings-content" onSubmit={activeTab === 'profile' ? handleProfileUpdate : handlePasswordUpdate}>
-                {activeTab === 'profile' ? (
-                  <div className="settings-form">
-                    <div className="input-group">
-                      <label>Nombre a mostrar</label>
-                      <div className="input-wrapper"><User size={18} /><input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required /></div>
-                    </div>
-                    <div className="input-group">
-                      <label>Correo electrónico</label>
-                      <div className="input-wrapper"><Mail size={18} /><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
-                    </div>
-                    {(email !== auth.currentUser?.email) && (
-                      <div className="input-group">
-                        <label style={{ color: 'var(--accent-amber)' }}>Contraseña Actual Requerida (para cambios de correo)</label>
-                        <div className="input-wrapper"><Lock size={18} /><input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required /></div>
-                      </div>
-                    )}
+              {settingsSuccess && <div className="login-success">{settingsSuccess}</div>}
+              {settingsError && <div className="login-error">{settingsError}</div>}
+
+              <form onSubmit={handleUpdateProfile} className="settings-form">
+                <div className="input-group">
+                  <label>Nombre de Usuario</label>
+                  <div className="input-wrapper">
+                    <User size={18} />
+                    <input
+                      type="text"
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      placeholder="Tu nombre"
+                      required
+                    />
                   </div>
-                ) : (
-                  <div className="settings-form">
-                    <div className="input-group">
-                      <label>Contraseña Actual</label>
-                      <div className="input-wrapper"><Lock size={18} /><input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required /></div>
-                    </div>
-                    <div className="input-group">
-                      <label>Nueva Contraseña</label>
-                      <div className="input-wrapper"><Lock size={18} /><input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required /></div>
+                </div>
+
+                <div className="input-group">
+                  <label>Correo Electrónico</label>
+                  <div className="input-wrapper">
+                    <Mail size={18} />
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="ejemplo@ubiobio.cl"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="input-group">
+                  <label>Nueva Contraseña <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(dejar vacío para no cambiar)</span></label>
+                  <div className="input-wrapper">
+                    <Lock size={18} />
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                </div>
+
+                {(newEmail !== (auth.currentUser?.email || '') || newPassword.length > 0) && (
+                  <div className="input-group">
+                    <label>Contraseña Actual <span style={{ color: 'var(--accent-amber)', fontWeight: 400 }}>(requerida para confirmar cambios)</span></label>
+                    <div className="input-wrapper">
+                      <Lock size={18} />
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Ingresa tu contraseña actual"
+                        required
+                      />
                     </div>
                   </div>
                 )}
-                <button type="submit" className="btn-save"><Save size={16} /> Guardar Cambios</button>
+
+                <button type="submit" className="btn-save">
+                  <Save size={16} /> Guardar Cambios
+                </button>
               </form>
             </div>
           </div>
         )}
       </main>
 
-      {/* ===== GITHUB WIDGET ORIGINAL INTACTO ===== */}
-      <div onClick={loading ? undefined : checkGithub} className={`github-widget ${status?.connected ? 'connected' : 'disconnected'}`}>
+      {/* GITHUB ACTIONS WIDGET */}
+      <div
+        onClick={loading ? undefined : checkGithub}
+        className={`github-widget ${status?.connected ? 'connected' : 'disconnected'}`}
+      >
         <Server size={20} color={status?.connected ? '#34d399' : '#f87171'} />
         <div>
           <div className="github-label">GitHub Actions</div>
@@ -719,3 +742,5 @@ export default function App() {
     </div>
   );
 }
+
+export default App;
