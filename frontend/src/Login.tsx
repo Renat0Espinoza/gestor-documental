@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { Lock, Mail, ArrowLeft, User } from 'lucide-react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
-import { auth } from './firebase';
+import { Lock, Mail, ArrowLeft, User, Loader2 } from 'lucide-react';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile
+} from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore'; // Inyectado para roles
+import { auth, db } from './firebase'; // Inyectado 'db'
 
 interface LoginProps {
   onLoginSuccess: () => void;
@@ -17,19 +23,36 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [success, setSuccess] = useState('');
   const [vista, setVista] = useState<Vista>('login');
   const [sendingReset, setSendingReset] = useState(false);
+  const [loading, setLoading] = useState(false); // Estado para el botón principal
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
     try {
       if (vista === 'register') {
+        // 1. Crear el usuario en Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+
+        // 2. Actualizar su nombre en el perfil
         await updateProfile(userCredential.user, { displayName: nombre.trim() });
+
+        // 3. INYECCIÓN DE LÓGICA: Guardar en Firestore con el rol "lector"
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          nombre: nombre.trim(),
+          correo: email,
+          rol: 'lector', // Rol inicial según lo solicitado
+          estado: 'Activo',
+          fechaCreacion: new Date().toISOString()
+        });
+
+        onLoginSuccess();
       } else {
+        // Login normal
         await signInWithEmailAndPassword(auth, email, password);
+        onLoginSuccess();
       }
-      onLoginSuccess();
     } catch (err: any) {
       if (err.code === 'auth/invalid-credential') {
         setError('Correo o contraseña incorrectos');
@@ -40,6 +63,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       } else {
         setError('Ocurrió un error. Inténtalo de nuevo.');
       }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -105,7 +130,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             </div>
 
             <button type="submit" className="btn-primary" disabled={sendingReset}>
-              {sendingReset ? 'Enviando...' : 'Enviar enlace de recuperación'}
+              {sendingReset ? <Loader2 className="spin-icon" size={20} /> : 'Enviar enlace de recuperación'}
             </button>
           </form>
 
@@ -134,6 +159,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         </p>
 
         {error && <div className="login-error">{error}</div>}
+        {success && <div className="login-success">{success}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
           {vista === 'register' && (
@@ -193,8 +219,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             </div>
           )}
 
-          <button type="submit" className="btn-primary">
-            {vista === 'register' ? 'Registrarse' : 'Iniciar Sesión'}
+          <button type="submit" className="btn-primary" disabled={loading}>
+            {loading ? <Loader2 className="spin-icon" size={20} /> : (vista === 'register' ? 'Registrarse' : 'Iniciar Sesión')}
           </button>
         </form>
 
