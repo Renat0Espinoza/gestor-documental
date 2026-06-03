@@ -734,6 +734,7 @@ function App() {
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-card)', background: 'var(--bg-glass)' }}>
                     <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Nombre / Correo</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Teléfono</th>
                     <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Rol Actual</th>
                     <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Cambiar a</th>
                   </tr>
@@ -744,6 +745,9 @@ function App() {
                       <td style={{ padding: '12px 16px' }}>
                         <div>{u.nombre || 'Sin nombre'}</div>
                         <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{u.correo || u.email}</div>
+                      </td>
+                      <td style={{ padding: '12px 16px', color: 'var(--text-primary)' }}>
+                        {u.telefono || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Sin registrar</span>}
                       </td>
                       <td style={{ padding: '12px 16px' }}>
                         <span style={{
