@@ -4,7 +4,7 @@ import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
-  Filter, Users, History, Shield, Eye
+  Filter, Users, History, Shield, Eye, Phone, Loader2
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase'; // <-- Modificado para incluir db
@@ -64,6 +64,13 @@ function App() {
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [settingsError, setSettingsError] = useState('');
 
+  // --- Estado de completar perfil (primer inicio de sesión) ---
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [profileLoading, setProfileLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -95,10 +102,25 @@ function App() {
         try {
           const docRef = doc(db, "users", user.uid);
           const docSnap = await getDoc(docRef);
-          if (docSnap.exists() && docSnap.data().rol) {
-            setUserRole(docSnap.data().rol);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.rol) {
+              setUserRole(data.rol);
+            } else {
+              setUserRole('lector');
+            }
+            // Verificar si el perfil está completo
+            if (data.perfilCompleto === false || (!data.nombre && !user.displayName)) {
+              setShowProfileModal(true);
+            } else {
+              setShowProfileModal(false);
+              // Actualizar displayName desde Firestore si existe
+              if (data.nombre) {
+                setDisplayName(data.nombre);
+              }
+            }
           } else {
-            setUserRole('lector'); // Por defecto para evitar problemas
+            setUserRole('lector');
           }
         } catch (error) {
           console.error("Error al obtener rol:", error);
@@ -356,9 +378,117 @@ function App() {
     </div>
   );
 
+  // --- COMPLETAR PERFIL (primer inicio de sesión) ---
+  const handleCompleteProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileError('');
+
+    if (!profileName.trim()) {
+      setProfileError('El nombre es obligatorio.');
+      return;
+    }
+    if (!profilePhone.trim()) {
+      setProfileError('El número de teléfono es obligatorio.');
+      return;
+    }
+
+    // Validar formato básico de teléfono (solo números, al menos 8 dígitos)
+    const phoneClean = profilePhone.replace(/[\s\-\+\(\)]/g, '');
+    if (!/^\d{8,15}$/.test(phoneClean)) {
+      setProfileError('Ingresa un número de teléfono válido (8-15 dígitos).');
+      return;
+    }
+
+    setProfileLoading(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      // Actualizar perfil de Firebase Auth
+      await updateProfile(user, { displayName: profileName.trim() });
+
+      // Actualizar documento en Firestore
+      await updateDoc(doc(db, 'users', user.uid), {
+        nombre: profileName.trim(),
+        telefono: profilePhone.trim(),
+        perfilCompleto: true
+      });
+
+      setDisplayName(profileName.trim());
+      setShowProfileModal(false);
+    } catch (err) {
+      console.error('Error al completar perfil:', err);
+      setProfileError('Ocurrió un error al guardar tu perfil. Inténtalo de nuevo.');
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
   // --- AUTH GATE ---
   if (!isAuthenticated) {
     return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
+
+  // --- MODAL OBLIGATORIO: Completar Perfil ---
+  if (showProfileModal) {
+    return (
+      <div className="profile-modal-overlay">
+        <div className="profile-modal">
+          <div className="profile-modal-icon">
+            <User size={32} color="#4f8cff" />
+          </div>
+          <h2>Completa tu Perfil</h2>
+          <p className="subtitle">
+            Para continuar, necesitamos algunos datos adicionales.
+          </p>
+
+          {profileError && <div className="login-error">{profileError}</div>}
+
+          <form onSubmit={handleCompleteProfile} className="login-form">
+            <div className="input-group">
+              <label>Nombre Completo <span className="required-badge">Obligatorio</span></label>
+              <div className="input-wrapper">
+                <User size={18} />
+                <input
+                  type="text"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  placeholder="Ingresa tu nombre completo"
+                  required
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="input-group">
+              <label>Número de Teléfono <span className="required-badge">Obligatorio</span></label>
+              <div className="input-wrapper">
+                <Phone size={18} />
+                <input
+                  type="tel"
+                  value={profilePhone}
+                  onChange={(e) => setProfilePhone(e.target.value)}
+                  placeholder="+56 9 1234 5678"
+                  required
+                />
+              </div>
+            </div>
+
+            <button type="submit" className="btn-primary" disabled={profileLoading}>
+              {profileLoading ? <Loader2 className="spin-icon" size={20} /> : 'Guardar y Continuar'}
+            </button>
+          </form>
+
+          <button
+            onClick={() => { setIsAuthenticated(false); signOut(auth); }}
+            className="btn-link"
+            style={{ marginTop: '16px', fontSize: '13px', color: 'var(--text-muted)' }}
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -585,14 +715,24 @@ function App() {
                         }}>{u.rol}</span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        <select
-                          value={u.rol} onChange={(e) => cambiarRol(u.id, e.target.value)}
-                          style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px' }}
-                        >
-                          <option value="admin">Administrador</option>
-                          <option value="colaborador">Colaborador</option>
-                          <option value="lector">Lector</option>
-                        </select>
+                        {u.rol === 'admin' ? (
+                          <select
+                            value="admin"
+                            disabled
+                            style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px', cursor: 'not-allowed' }}
+                          >
+                            <option value="admin">Administrador</option>
+                          </select>
+                        ) : (
+                          <select
+                            value={u.rol}
+                            onChange={(e) => cambiarRol(u.id, e.target.value)}
+                            style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', padding: '6px 10px', borderRadius: '4px', outline: 'none', fontSize: '13px' }}
+                          >
+                            <option value="colaborador">Colaborador</option>
+                            <option value="lector">Lector</option>
+                          </select>
+                        )}
                       </td>
                     </tr>
                   ))}

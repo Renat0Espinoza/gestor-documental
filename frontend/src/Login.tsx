@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { Lock, Mail, ArrowLeft, User, Loader2 } from 'lucide-react';
+import { Lock, Mail, ArrowLeft, Loader2, Eye, EyeOff } from 'lucide-react';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
-  updateProfile
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore'; // Inyectado para roles
 import { auth, db } from './firebase'; // Inyectado 'db'
@@ -18,12 +17,16 @@ type Vista = 'login' | 'register' | 'forgot';
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [nombre, setNombre] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [vista, setVista] = useState<Vista>('login');
   const [sendingReset, setSendingReset] = useState(false);
-  const [loading, setLoading] = useState(false); // Estado para el botón principal
+  const [loading, setLoading] = useState(false);
+
+  // Estados para visibilidad de contraseñas
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,18 +35,24 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
     try {
       if (vista === 'register') {
+        // Validar que las contraseñas coincidan
+        if (password !== confirmPassword) {
+          setError('Las contraseñas no coinciden. Por favor, verifica e inténtalo de nuevo.');
+          setLoading(false);
+          return;
+        }
+
         // 1. Crear el usuario en Authentication
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
-        // 2. Actualizar su nombre en el perfil
-        await updateProfile(userCredential.user, { displayName: nombre.trim() });
-
-        // 3. INYECCIÓN DE LÓGICA: Guardar en Firestore con el rol "lector"
+        // 2. Guardar en Firestore con el rol "lector" y sin nombre (se pedirá después)
         await setDoc(doc(db, 'users', userCredential.user.uid), {
-          nombre: nombre.trim(),
+          nombre: '',
+          telefono: '',
           correo: email,
           rol: 'lector', // Rol inicial según lo solicitado
           estado: 'Activo',
+          perfilCompleto: false, // Flag para saber si completó su perfil
           fechaCreacion: new Date().toISOString()
         });
 
@@ -99,6 +108,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setVista(nuevaVista);
     setError('');
     setSuccess('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setConfirmPassword('');
   };
 
   // --- VISTA DE RECUPERAR CONTRASEÑA ---
@@ -162,22 +174,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         {success && <div className="login-success">{success}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
-          {vista === 'register' && (
-            <div className="input-group">
-              <label>Nombre de Usuario</label>
-              <div className="input-wrapper">
-                <User size={18} />
-                <input
-                  type="text"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Tu nombre"
-                  required
-                />
-              </div>
-            </div>
-          )}
-
           <div className="input-group">
             <label>Correo Electrónico</label>
             <div className="input-wrapper">
@@ -197,14 +193,54 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <div className="input-wrapper">
               <Lock size={18} />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
               />
+              <button
+                type="button"
+                className="btn-toggle-password"
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex={-1}
+                title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
+
+          {vista === 'register' && (
+            <div className="input-group">
+              <label>Confirmar Contraseña</label>
+              <div className="input-wrapper">
+                <Lock size={18} />
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                />
+                <button
+                  type="button"
+                  className="btn-toggle-password"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  tabIndex={-1}
+                  title={showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              {confirmPassword && password !== confirmPassword && (
+                <div className="input-hint error">Las contraseñas no coinciden</div>
+              )}
+              {confirmPassword && password === confirmPassword && confirmPassword.length > 0 && (
+                <div className="input-hint success">Las contraseñas coinciden ✓</div>
+              )}
+            </div>
+          )}
 
           {vista === 'login' && (
             <div style={{ textAlign: 'right', marginTop: '-8px' }}>

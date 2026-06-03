@@ -631,6 +631,125 @@ html, body, #root {
 .github-status.fail { color: var(--accent-red); }
 .spin-icon { animation: spin 1s linear infinite; }
 
+/* ===== PASSWORD TOGGLE ===== */
+.btn-toggle-password {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color var(--transition-fast);
+  border-radius: 4px;
+}
+.btn-toggle-password:hover {
+  color: var(--accent-blue);
+}
+
+/* ===== INPUT HINTS ===== */
+.input-hint {
+  font-size: 12px;
+  margin-top: 6px;
+  padding-left: 2px;
+  animation: fadeIn 0.2s ease;
+}
+.input-hint.error {
+  color: var(--accent-red);
+}
+.input-hint.success {
+  color: var(--accent-green);
+}
+
+/* ===== PROFILE COMPLETION MODAL ===== */
+.profile-modal-overlay {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: var(--gradient-login-bg);
+  position: relative;
+  overflow: hidden;
+}
+.profile-modal-overlay::before {
+  content: '';
+  position: absolute;
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(79,140,255,0.1) 0%, transparent 70%);
+  top: -150px; right: -150px;
+  pointer-events: none;
+}
+.profile-modal-overlay::after {
+  content: '';
+  position: absolute;
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(167,139,250,0.08) 0%, transparent 70%);
+  bottom: -120px; left: -120px;
+  pointer-events: none;
+}
+.profile-modal {
+  background: var(--bg-card);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-xl);
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 460px;
+  box-shadow: var(--shadow-lg);
+  animation: fadeIn 0.5s ease;
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+.profile-modal h2 {
+  margin: 16px 0 8px 0;
+  font-size: 24px;
+  font-weight: 700;
+  background: var(--gradient-main);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.profile-modal .subtitle {
+  color: var(--text-secondary);
+  margin: 0 0 28px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.profile-modal .login-form {
+  text-align: left;
+}
+.profile-modal-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-md);
+  background: rgba(79, 140, 255, 0.1);
+  border: 1px solid rgba(79, 140, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  animation: float 3s ease-in-out infinite;
+}
+
+/* ===== REQUIRED BADGE ===== */
+.required-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-amber);
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
   .app-header { padding: 14px 20px; }
@@ -638,6 +757,7 @@ html, body, #root {
   .card-grid { grid-template-columns: 1fr 1fr; }
   .panel { padding: 24px 18px; }
   .login-card { margin: 16px; padding: 36px 28px; }
+  .profile-modal { margin: 16px; padding: 36px 28px; }
 }
 @media (max-width: 480px) {
   .card-grid { grid-template-columns: 1fr; }
