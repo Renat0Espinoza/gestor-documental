@@ -4,19 +4,52 @@ import {
   Server, CheckCircle, XCircle, RefreshCcw,
   UploadCloud, FolderOpen, Search, Settings, LogOut,
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
-  Filter, Users, History, Shield, Eye, Phone, Loader2
+  Filter, Users, History, Shield, Eye, Phone, Loader2,
+  Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
+  UserPlus, UserX, Tag
 } from 'lucide-react';
 import Login from './Login';
-import { auth, db } from './firebase'; // <-- Modificado para incluir db
+import { auth, db } from './firebase';
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc } from 'firebase/firestore'; // <-- Funciones de Firestore
+import { doc, getDoc, collection, getDocs, updateDoc, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 
+// ===== INTERFACES =====
 interface FileInfo {
   name: string;
   size: number;
   modified: string | null;
 }
 
+interface Categoria {
+  id: string;
+  nombre: string;
+  creadoPor: string;
+}
+
+interface Subcategoria {
+  id: string;
+  nombre: string;
+  categoriaId: string;
+}
+
+interface Proyecto {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  categoriaId: string;
+  subcategoriaId: string;
+  estado: 'activo' | 'finalizado';
+  creadoPor: string;
+}
+
+interface Area {
+  id: string;
+  nombre: string;
+  colaboradores: string[];
+  proyectoId: string;
+}
+
+// ===== HELPERS =====
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -32,8 +65,8 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-// <-- Modificado: Añadidas las vistas del admin
-type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial';
+// ===== TIPOS DE VISTA =====
+type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'proyectos' | 'proyecto-detalle' | 'categorias';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -45,7 +78,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<FileInfo[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // --- NUEVOS ESTADOS (Roles, Filtros y Auditoría) ---
+  // --- Roles, Filtros y Auditoría ---
   const [userRole, setUserRole] = useState<'admin' | 'colaborador' | 'lector'>('lector');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterExtension, setFilterExtension] = useState('all');
@@ -73,11 +106,41 @@ function App() {
   const [profileError, setProfileError] = useState('');
   const [profileLoading, setProfileLoading] = useState(false);
 
+  // --- Estado de desactivación ---
+  const [isDeactivated, setIsDeactivated] = useState(false);
+
+  // --- Categorías y Subcategorías ---
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [subcategorias, setSubcategorias] = useState<Subcategoria[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newSubcategoryName, setNewSubcategoryName] = useState('');
+  const [addingSubcategoryTo, setAddingSubcategoryTo] = useState<string | null>(null);
+
+  // --- Proyectos ---
+  const [proyectos, setProyectos] = useState<Proyecto[]>([]);
+  const [showCreateProject, setShowCreateProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [newProjectCatId, setNewProjectCatId] = useState('');
+  const [newProjectSubcatId, setNewProjectSubcatId] = useState('');
+
+  // --- Proyecto Detalle ---
+  const [selectedProject, setSelectedProject] = useState<Proyecto | null>(null);
+  const [projectAreas, setProjectAreas] = useState<Area[]>([]);
+  const [newAreaName, setNewAreaName] = useState('');
+
+  // --- Modal Asignar Colaboradores ---
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignAreaId, setAssignAreaId] = useState<string | null>(null);
+  const [selectedCollaborators, setSelectedCollaborators] = useState<string[]>([]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const API_BASE = '';
 
+  // ===== GITHUB STATUS =====
   const checkGithub = async () => {
     setLoading(true);
     try {
@@ -94,8 +157,8 @@ function App() {
     if (isAuthenticated) checkGithub();
   }, [isAuthenticated]);
 
+  // ===== AUTH STATE =====
   useEffect(() => {
-    // <-- Modificado a función asíncrona para obtener el rol de Firestore
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setDisplayName(user.displayName || '');
@@ -106,6 +169,14 @@ function App() {
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const data = docSnap.data();
+
+            // Verificar si usuario está desactivado
+            if (data.activo === false) {
+              setIsDeactivated(true);
+              return;
+            }
+            setIsDeactivated(false);
+
             if (data.rol) {
               setUserRole(data.rol);
             } else {
@@ -116,7 +187,6 @@ function App() {
               setShowProfileModal(true);
             } else {
               setShowProfileModal(false);
-              // Actualizar displayName desde Firestore si existe
               if (data.nombre) {
                 setDisplayName(data.nombre);
               }
@@ -136,7 +206,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- REGISTRO DE AUDITORÍA (HU4) ---
+  // ===== AUDITORÍA =====
   const registrarAuditoria = (accion: string, documento: string) => {
     const newLog = {
       id: Date.now(),
@@ -148,8 +218,8 @@ function App() {
     setHistoryLogs(prev => [newLog, ...prev]);
   };
 
-  // --- SUBIDA DE ARCHIVOS ---
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+  // ===== SUBIDA DE ARCHIVOS =====
+  const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -174,7 +244,7 @@ function App() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
-      registrarAuditoria('Subió el archivo', response.data.file || file.name); // <-- Registro de subida
+      registrarAuditoria('Subió el archivo', response.data.file || file.name);
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 413) {
         alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
@@ -186,7 +256,7 @@ function App() {
     }
   };
 
-  // --- EXPLORADOR ---
+  // ===== EXPLORADOR =====
   const abrirExplorador = async () => {
     try {
       const response = await axios.get(`${API_BASE}/api/files`);
@@ -197,7 +267,7 @@ function App() {
     }
   };
 
-  // --- BÚSQUEDA ---
+  // ===== BÚSQUEDA =====
   const abrirBusqueda = () => {
     setSearchQuery('');
     setSearchResults([]);
@@ -226,25 +296,26 @@ function App() {
     }, 300);
   };
 
-  // --- LÓGICA FILTROS AVANZADOS (HU1) ---
+  // ===== FILTROS AVANZADOS =====
   const filteredSearchResults = searchResults.filter(f => {
     let matchExt = true;
     if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
 
     let matchSize = true;
     if (filterSize !== 'all') {
-      if (filterSize === 'small') matchSize = f.size < 1024 * 1024; // < 1MB
-      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024; // 1-5MB
-      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024; // > 5MB
+      if (filterSize === 'small') matchSize = f.size < 1024 * 1024;
+      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
+      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
     }
     return matchExt && matchSize;
   });
 
   const handleDownload = (filename: string) => {
-    registrarAuditoria('Descargó el archivo', filename); // <-- Registro de descarga
+    registrarAuditoria('Descargó el archivo', filename);
     window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
   };
 
+  // ===== CONFIGURACIÓN =====
   const abrirConfiguracion = async () => {
     setNewDisplayName(displayName);
     setNewEmail(auth.currentUser?.email || '');
@@ -339,9 +410,9 @@ function App() {
     }
   };
 
-  // --- ELIMINAR ARCHIVO (doble confirmación) ---
+  // ===== ELIMINAR ARCHIVO =====
   const handleDelete = async (filename: string) => {
-    if (userRole === 'lector') return; // Bloqueo de seguridad
+    if (userRole === 'lector') return;
 
     const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
     if (!primera) return;
@@ -352,7 +423,7 @@ function App() {
     try {
       await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
       alert('🗑️ Archivo eliminado correctamente.');
-      registrarAuditoria('Eliminó el archivo', filename); // <-- Registro
+      registrarAuditoria('Eliminó el archivo', filename);
       const response = await axios.get(`${API_BASE}/api/files`);
       setListaArchivos(response.data);
     } catch {
@@ -360,7 +431,7 @@ function App() {
     }
   };
 
-  // --- FUNCIONES ADMIN (HU2) ---
+  // ===== USUARIOS =====
   const cargarUsuarios = async () => {
     try {
       const querySnapshot = await getDocs(collection(db, 'users'));
@@ -385,7 +456,304 @@ function App() {
     }
   };
 
-  // --- COMPONENTE DE LISTA DE ARCHIVOS REUTILIZABLE ---
+  // ===== ACTIVAR / DESACTIVAR USUARIO =====
+  const toggleUserActive = async (userId: string, currentlyActive: boolean) => {
+    const newStatus = !currentlyActive;
+    const action = newStatus ? 'activar' : 'desactivar';
+    const confirmed = confirm(`¿Estás seguro de que deseas ${action} a este usuario?`);
+    if (!confirmed) return;
+
+    try {
+      await updateDoc(doc(db, 'users', userId), { activo: newStatus });
+      cargarUsuarios();
+      registrarAuditoria(
+        newStatus ? 'Activó al usuario' : 'Desactivó al usuario',
+        `Usuario ID: ${userId}`
+      );
+      alert(`✅ Usuario ${newStatus ? 'activado' : 'desactivado'} correctamente.`);
+    } catch {
+      alert('❌ Error al cambiar el estado del usuario.');
+    }
+  };
+
+  // ===== CATEGORÍAS =====
+  const cargarCategorias = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'categorias'));
+      const cats: Categoria[] = [];
+      snap.forEach(d => cats.push({ id: d.id, ...d.data() } as Categoria));
+      setCategorias(cats);
+    } catch (err) {
+      console.error('Error cargando categorías:', err);
+    }
+  };
+
+  const cargarSubcategorias = async (categoriaId: string) => {
+    try {
+      const snap = await getDocs(collection(db, 'categorias', categoriaId, 'subcategorias'));
+      const subs: Subcategoria[] = [];
+      snap.forEach(d => subs.push({ id: d.id, nombre: d.data().nombre, categoriaId }));
+      setSubcategorias(prev => {
+        const filtered = prev.filter(s => s.categoriaId !== categoriaId);
+        return [...filtered, ...subs];
+      });
+    } catch (err) {
+      console.error('Error cargando subcategorías:', err);
+    }
+  };
+
+  const cargarTodasSubcategorias = async (cats: Categoria[]) => {
+    const allSubs: Subcategoria[] = [];
+    for (const cat of cats) {
+      try {
+        const snap = await getDocs(collection(db, 'categorias', cat.id, 'subcategorias'));
+        snap.forEach(d => allSubs.push({ id: d.id, nombre: d.data().nombre, categoriaId: cat.id }));
+      } catch { /* skip */ }
+    }
+    setSubcategorias(allSubs);
+  };
+
+  const crearCategoria = async () => {
+    if (!newCategoryName.trim()) return;
+    try {
+      await addDoc(collection(db, 'categorias'), {
+        nombre: newCategoryName.trim(),
+        creadoPor: auth.currentUser?.uid || '',
+        fechaCreacion: serverTimestamp()
+      });
+      setNewCategoryName('');
+      cargarCategorias();
+      registrarAuditoria('Creó categoría', newCategoryName.trim());
+    } catch {
+      alert('❌ Error al crear la categoría.');
+    }
+  };
+
+  const eliminarCategoria = async (catId: string, catName: string) => {
+    const confirmed = confirm(`¿Eliminar la categoría "${catName}" y todas sus subcategorías?`);
+    if (!confirmed) return;
+    try {
+      // Eliminar subcategorías primero
+      const subSnap = await getDocs(collection(db, 'categorias', catId, 'subcategorias'));
+      for (const s of subSnap.docs) {
+        await deleteDoc(doc(db, 'categorias', catId, 'subcategorias', s.id));
+      }
+      await deleteDoc(doc(db, 'categorias', catId));
+      cargarCategorias();
+      setSubcategorias(prev => prev.filter(s => s.categoriaId !== catId));
+      registrarAuditoria('Eliminó categoría', catName);
+    } catch {
+      alert('❌ Error al eliminar la categoría.');
+    }
+  };
+
+  const crearSubcategoria = async (categoriaId: string) => {
+    if (!newSubcategoryName.trim()) return;
+    try {
+      await addDoc(collection(db, 'categorias', categoriaId, 'subcategorias'), {
+        nombre: newSubcategoryName.trim()
+      });
+      setNewSubcategoryName('');
+      setAddingSubcategoryTo(null);
+      cargarSubcategorias(categoriaId);
+      registrarAuditoria('Creó subcategoría', newSubcategoryName.trim());
+    } catch {
+      alert('❌ Error al crear la subcategoría.');
+    }
+  };
+
+  const eliminarSubcategoria = async (categoriaId: string, subId: string, subName: string) => {
+    const confirmed = confirm(`¿Eliminar la subcategoría "${subName}"?`);
+    if (!confirmed) return;
+    try {
+      await deleteDoc(doc(db, 'categorias', categoriaId, 'subcategorias', subId));
+      cargarSubcategorias(categoriaId);
+      registrarAuditoria('Eliminó subcategoría', subName);
+    } catch {
+      alert('❌ Error al eliminar.');
+    }
+  };
+
+  const toggleCategory = (catId: string) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(catId)) {
+        next.delete(catId);
+      } else {
+        next.add(catId);
+        cargarSubcategorias(catId);
+      }
+      return next;
+    });
+  };
+
+  // ===== PROYECTOS =====
+  const cargarProyectos = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'proyectos'));
+      const projs: Proyecto[] = [];
+      snap.forEach(d => projs.push({ id: d.id, ...d.data() } as Proyecto));
+      setProyectos(projs);
+    } catch (err) {
+      console.error('Error cargando proyectos:', err);
+    }
+  };
+
+  const crearProyecto = async () => {
+    if (!newProjectName.trim() || !newProjectCatId || !newProjectSubcatId) {
+      alert('⚠️ Completa todos los campos obligatorios.');
+      return;
+    }
+    try {
+      await addDoc(collection(db, 'proyectos'), {
+        nombre: newProjectName.trim(),
+        descripcion: newProjectDesc.trim(),
+        categoriaId: newProjectCatId,
+        subcategoriaId: newProjectSubcatId,
+        estado: 'activo',
+        creadoPor: auth.currentUser?.uid || '',
+        fechaCreacion: serverTimestamp()
+      });
+      setNewProjectName('');
+      setNewProjectDesc('');
+      setNewProjectCatId('');
+      setNewProjectSubcatId('');
+      setShowCreateProject(false);
+      cargarProyectos();
+      registrarAuditoria('Creó proyecto', newProjectName.trim());
+    } catch {
+      alert('❌ Error al crear el proyecto.');
+    }
+  };
+
+  // ===== ÁREAS =====
+  const cargarAreas = async (proyectoId: string) => {
+    try {
+      const snap = await getDocs(collection(db, 'proyectos', proyectoId, 'areas'));
+      const areas: Area[] = [];
+      snap.forEach(d => areas.push({ id: d.id, ...d.data(), proyectoId } as Area));
+      setProjectAreas(areas);
+    } catch (err) {
+      console.error('Error cargando áreas:', err);
+    }
+  };
+
+  const crearArea = async (proyectoId: string) => {
+    if (!newAreaName.trim()) return;
+    try {
+      await addDoc(collection(db, 'proyectos', proyectoId, 'areas'), {
+        nombre: newAreaName.trim(),
+        colaboradores: []
+      });
+      setNewAreaName('');
+      cargarAreas(proyectoId);
+      registrarAuditoria('Creó área', newAreaName.trim());
+    } catch {
+      alert('❌ Error al crear el área.');
+    }
+  };
+
+  const eliminarArea = async (proyectoId: string, areaId: string, areaName: string) => {
+    const confirmed = confirm(`¿Eliminar el área "${areaName}"?`);
+    if (!confirmed) return;
+    try {
+      await deleteDoc(doc(db, 'proyectos', proyectoId, 'areas', areaId));
+      cargarAreas(proyectoId);
+      registrarAuditoria('Eliminó área', areaName);
+    } catch {
+      alert('❌ Error al eliminar el área.');
+    }
+  };
+
+  // ===== ASIGNAR COLABORADORES =====
+  const openAssignModal = (areaId: string, currentCollabs: string[]) => {
+    setAssignAreaId(areaId);
+    setSelectedCollaborators([...currentCollabs]);
+    cargarUsuarios();
+    setShowAssignModal(true);
+  };
+
+  const guardarAsignacion = async () => {
+    if (!selectedProject || !assignAreaId) return;
+    try {
+      await updateDoc(
+        doc(db, 'proyectos', selectedProject.id, 'areas', assignAreaId),
+        { colaboradores: selectedCollaborators }
+      );
+      setShowAssignModal(false);
+      cargarAreas(selectedProject.id);
+      registrarAuditoria('Asignó colaboradores al área', assignAreaId);
+    } catch {
+      alert('❌ Error al asignar colaboradores.');
+    }
+  };
+
+  const abrirProyectoDetalle = async (proyecto: Proyecto) => {
+    setSelectedProject(proyecto);
+    await cargarAreas(proyecto.id);
+    await cargarUsuarios();
+    setVistaActual('proyecto-detalle');
+  };
+
+  const abrirProyectos = async () => {
+    await cargarProyectos();
+    await cargarCategorias();
+    const snap = await getDocs(collection(db, 'categorias'));
+    const cats: Categoria[] = [];
+    snap.forEach(d => cats.push({ id: d.id, ...d.data() } as Categoria));
+    await cargarTodasSubcategorias(cats);
+    setVistaActual('proyectos');
+  };
+
+  const abrirCategorias = async () => {
+    await cargarCategorias();
+    setVistaActual('categorias');
+  };
+
+  // ===== HELPER: obtener proyectos visibles según rol =====
+  const getProyectosVisibles = () => {
+    if (userRole === 'admin') return proyectos;
+    // Colaboradores: solo proyectos donde están asignados a al menos un área
+    const uid = auth.currentUser?.uid;
+    if (!uid) return [];
+    // Necesitamos filtrar según las áreas cargadas — para la lista usamos todos los proyectos
+    // y filtramos basándonos en si el usuario aparece en alguna área
+    return proyectos;
+  };
+
+  // Filtrado real se hace al cargar — pero para la vista de lista necesitamos una versión
+  // que cargue las áreas de cada proyecto. Para simplificar, filtramos en el efecto.
+  const [proyectosVisibles, setProyectosVisibles] = useState<Proyecto[]>([]);
+
+  useEffect(() => {
+    const filterProjects = async () => {
+      if (userRole === 'admin') {
+        setProyectosVisibles(proyectos);
+        return;
+      }
+      const uid = auth.currentUser?.uid;
+      if (!uid) { setProyectosVisibles([]); return; }
+
+      const visible: Proyecto[] = [];
+      for (const p of proyectos) {
+        try {
+          const areasSnap = await getDocs(collection(db, 'proyectos', p.id, 'areas'));
+          let isAssigned = false;
+          areasSnap.forEach(aDoc => {
+            const data = aDoc.data();
+            if (data.colaboradores && data.colaboradores.includes(uid)) {
+              isAssigned = true;
+            }
+          });
+          if (isAssigned) visible.push(p);
+        } catch { /* skip */ }
+      }
+      setProyectosVisibles(visible);
+    };
+    filterProjects();
+  }, [proyectos, userRole]);
+
+  // ===== COMPONENTE DE LISTA DE ARCHIVOS =====
   const renderFileList = (files: FileInfo[]) => (
     <div className="file-list">
       {files.map((archivo, index) => (
@@ -405,7 +773,6 @@ function App() {
               <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
               Descargar
             </button>
-            {/* HU3: Ocultar botón eliminar para Lectores */}
             {userRole !== 'lector' && (
               <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Eliminar archivo">
                 <Trash2 size={14} />
@@ -417,7 +784,7 @@ function App() {
     </div>
   );
 
-  // --- COMPLETAR PERFIL (primer inicio de sesión) ---
+  // ===== COMPLETAR PERFIL =====
   const handleCompleteProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileError('');
@@ -431,7 +798,6 @@ function App() {
       return;
     }
 
-    // Validar formato básico de teléfono (solo números, al menos 8 dígitos)
     const phoneClean = profilePhone.replace(/[\s\-\+\(\)]/g, '');
     if (!/^\d{8,15}$/.test(phoneClean)) {
       setProfileError('Ingresa un número de teléfono válido (8-15 dígitos).');
@@ -443,10 +809,8 @@ function App() {
       const user = auth.currentUser;
       if (!user) return;
 
-      // Actualizar perfil de Firebase Auth
       await updateProfile(user, { displayName: profileName.trim() });
 
-      // Actualizar documento en Firestore
       await updateDoc(doc(db, 'users', user.uid), {
         nombre: profileName.trim(),
         telefono: profilePhone.trim(),
@@ -463,12 +827,45 @@ function App() {
     }
   };
 
-  // --- AUTH GATE ---
+  // ===== HELPER: nombre de categoría/subcategoría =====
+  const getNombreCategoria = (id: string) => categorias.find(c => c.id === id)?.nombre || '—';
+  const getNombreSubcategoria = (id: string) => subcategorias.find(s => s.id === id)?.nombre || '—';
+  const getNombreUsuario = (uid: string) => {
+    const u = usersList.find(u => u.id === uid);
+    return u?.nombre || u?.correo || u?.email || uid;
+  };
+
+  // ===== AUTH GATE =====
   if (!isAuthenticated) {
     return <Login onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
-  // --- MODAL OBLIGATORIO: Completar Perfil ---
+  // ===== PANTALLA DE DESACTIVACIÓN =====
+  if (isDeactivated) {
+    return (
+      <div className="deactivated-screen">
+        <div className="deactivated-card">
+          <div className="deactivated-icon">
+            <UserX size={36} color="#f87171" />
+          </div>
+          <h2>Cuenta Desactivada</h2>
+          <p>
+            Tu cuenta ha sido desactivada por un administrador. 
+            Si crees que esto es un error, contacta al administrador del sistema.
+          </p>
+          <button
+            onClick={() => { setIsAuthenticated(false); setIsDeactivated(false); signOut(auth); }}
+            className="btn-primary"
+            style={{ width: '100%' }}
+          >
+            Cerrar Sesión
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== MODAL COMPLETAR PERFIL =====
   if (showProfileModal) {
     return (
       <div className="profile-modal-overlay">
@@ -556,7 +953,6 @@ function App() {
                   <span className="welcome-wave">👋</span>
                   <span>Bienvenid@ <strong>{displayName}</strong></span>
                 </div>
-                {/* LEYENDA VISTA DE ROL */}
                 <div style={{
                   display: 'inline-flex', alignItems: 'center', gap: '8px',
                   background: userRole === 'admin' ? 'rgba(79, 140, 255, 0.1)' : userRole === 'colaborador' ? 'rgba(52, 211, 153, 0.1)' : 'rgba(255, 255, 255, 0.05)',
@@ -568,53 +964,83 @@ function App() {
                 </div>
               </div>
             )}
-            <div className="section-title">Acciones Rápidas</div>
-            <div className="card-grid">
 
-              {/* HU3: Ocultar Tarjeta Subir para Lectores */}
-              {userRole !== 'lector' && (
-                <button className="action-card" onClick={() => fileInputRef.current?.click()}>
-                  <div className="card-icon blue">
-                    <UploadCloud size={26} color="#4f8cff" />
+            {/* SECCIÓN: DOCUMENTOS */}
+            <div className="dashboard-section">
+              <div className="section-label">
+                <FileText size={14} />
+                Documentos
+              </div>
+              <div className="card-grid">
+                {userRole !== 'lector' && (
+                  <button className="action-card" onClick={() => fileInputRef.current?.click()}>
+                    <div className="card-icon blue">
+                      <UploadCloud size={26} color="#4f8cff" />
+                    </div>
+                    <h3>Subir Documento</h3>
+                    <p>Cargar nuevos archivos PDF al sistema (limite 10mb)</p>
+                  </button>
+                )}
+
+                <button className="action-card" onClick={abrirExplorador}>
+                  <div className="card-icon green">
+                    <FolderOpen size={26} color="#34d399" />
                   </div>
-                  <h3>Subir Documento</h3>
-                  <p>Cargar nuevos archivos PDF al sistema (limite 10mb)</p>
+                  <h3>Explorar Archivos</h3>
+                  <p>Ver listado de documentos guardados</p>
                 </button>
-              )}
 
-              <button className="action-card" onClick={abrirExplorador}>
-                <div className="card-icon green">
-                  <FolderOpen size={26} color="#34d399" />
+                <button className="action-card" onClick={abrirBusqueda}>
+                  <div className="card-icon amber">
+                    <Search size={26} color="#fbbf24" />
+                  </div>
+                  <h3>Buscar</h3>
+                  <p>Encontrar archivos por nombre</p>
+                </button>
+              </div>
+            </div>
+
+            {/* SECCIÓN: GESTIÓN */}
+            <div className="dashboard-section">
+              <div className="section-label">
+                <Briefcase size={14} />
+                Gestión
+              </div>
+              <div className="card-grid">
+                <button className="action-card" onClick={abrirProyectos}>
+                  <div className="card-icon" style={{ background: 'rgba(79, 140, 255, 0.1)' }}>
+                    <Briefcase size={26} color="#4f8cff" />
+                  </div>
+                  <h3>Proyectos</h3>
+                  <p>Ver y gestionar proyectos y áreas de trabajo</p>
+                </button>
+
+                {userRole === 'admin' && (
+                  <button className="action-card" onClick={abrirCategorias}>
+                    <div className="card-icon" style={{ background: 'rgba(167, 139, 250, 0.1)' }}>
+                      <Layers size={26} color="#a78bfa" />
+                    </div>
+                    <h3>Categorías</h3>
+                    <p>Gestionar categorías y subcategorías</p>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* SECCIÓN: ADMINISTRACIÓN (solo admin) */}
+            {userRole === 'admin' && (
+              <div className="dashboard-section">
+                <div className="section-label">
+                  <Shield size={14} />
+                  Administración
                 </div>
-                <h3>Explorar Archivos</h3>
-                <p>Ver listado de documentos guardados</p>
-              </button>
-
-              <button className="action-card" onClick={abrirBusqueda}>
-                <div className="card-icon amber">
-                  <Search size={26} color="#fbbf24" />
-                </div>
-                <h3>Buscar</h3>
-                <p>Encontrar archivos por nombre</p>
-              </button>
-
-              <button className="action-card" onClick={abrirConfiguracion}>
-                <div className="card-icon purple">
-                  <Settings size={26} color="#a78bfa" />
-                </div>
-                <h3>Configuración</h3>
-                <p>Ajustes del sistema y conexión</p>
-              </button>
-
-              {/* HU2 y HU4: Tarjetas Exclusivas Administrador */}
-              {userRole === 'admin' && (
-                <>
+                <div className="card-grid">
                   <button className="action-card" onClick={() => { cargarUsuarios(); setVistaActual('usuarios'); }}>
                     <div className="card-icon" style={{ background: 'rgba(244, 114, 182, 0.1)' }}>
                       <Users size={26} color="#f472b6" />
                     </div>
                     <h3>Gestión Roles</h3>
-                    <p>Asignar permisos a usuarios</p>
+                    <p>Asignar permisos y activar/desactivar usuarios</p>
                   </button>
 
                   <button className="action-card" onClick={() => setVistaActual('historial')}>
@@ -624,8 +1050,25 @@ function App() {
                     <h3>Auditoría</h3>
                     <p>Historial de cambios del sistema</p>
                   </button>
-                </>
-              )}
+                </div>
+              </div>
+            )}
+
+            {/* SECCIÓN: MI CUENTA */}
+            <div className="dashboard-section">
+              <div className="section-label">
+                <User size={14} />
+                Mi Cuenta
+              </div>
+              <div className="card-grid">
+                <button className="action-card" onClick={abrirConfiguracion}>
+                  <div className="card-icon purple">
+                    <Settings size={26} color="#a78bfa" />
+                  </div>
+                  <h3>Configuración</h3>
+                  <p>Ajustes de perfil y conexión</p>
+                </button>
+              </div>
             </div>
           </>
         )}
@@ -652,7 +1095,7 @@ function App() {
           </div>
         )}
 
-        {/* === BÚSQUEDA Y FILTROS AVANZADOS === */}
+        {/* === BÚSQUEDA === */}
         {vistaActual === 'busqueda' && (
           <div className="panel">
             <div className="panel-header">
@@ -720,7 +1163,7 @@ function App() {
           </div>
         )}
 
-        {/* === USUARIOS (HU2 - Solo Admin) === */}
+        {/* === USUARIOS (Solo Admin) === */}
         {vistaActual === 'usuarios' && userRole === 'admin' && (
           <div className="panel">
             <div className="panel-header">
@@ -737,6 +1180,7 @@ function App() {
                     <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Teléfono</th>
                     <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Rol Actual</th>
                     <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Cambiar a</th>
+                    <th style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-secondary)' }}>Estado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -777,6 +1221,20 @@ function App() {
                           </select>
                         )}
                       </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        {u.rol === 'admin' ? (
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>—</span>
+                        ) : (
+                          <label className="toggle-switch" title={u.activo !== false ? 'Activo — clic para desactivar' : 'Desactivado — clic para activar'}>
+                            <input
+                              type="checkbox"
+                              checked={u.activo !== false}
+                              onChange={() => toggleUserActive(u.id, u.activo !== false)}
+                            />
+                            <span className="toggle-slider"></span>
+                          </label>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -785,7 +1243,7 @@ function App() {
           </div>
         )}
 
-        {/* === HISTORIAL (HU4 - Solo Admin) === */}
+        {/* === HISTORIAL (Solo Admin) === */}
         {vistaActual === 'historial' && userRole === 'admin' && (
           <div className="panel">
             <div className="panel-header">
@@ -820,6 +1278,335 @@ function App() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* === CATEGORÍAS (Solo Admin) === */}
+        {vistaActual === 'categorias' && userRole === 'admin' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Categorías y Subcategorías</h2>
+            </div>
+
+            {/* Formulario crear categoría */}
+            <div className="inline-form" style={{ marginTop: 0, marginBottom: 24 }}>
+              <Layers size={18} style={{ color: 'var(--accent-purple)', flexShrink: 0 }} />
+              <input
+                type="text"
+                placeholder="Nueva categoría..."
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && crearCategoria()}
+              />
+              <button className="btn-icon primary" onClick={crearCategoria} title="Crear categoría">
+                <Plus size={18} />
+              </button>
+            </div>
+
+            {/* Listado de categorías */}
+            {categorias.length === 0 ? (
+              <div className="empty-state">
+                <Layers size={48} />
+                <p>No hay categorías creadas aún.</p>
+              </div>
+            ) : (
+              <div className="category-list">
+                {categorias.map(cat => {
+                  const isExpanded = expandedCategories.has(cat.id);
+                  const catSubs = subcategorias.filter(s => s.categoriaId === cat.id);
+                  return (
+                    <div key={cat.id} className="category-card">
+                      <div className="category-header" onClick={() => toggleCategory(cat.id)}>
+                        <div className="category-header-left">
+                          {isExpanded ? <ChevronDown size={18} color="var(--accent-blue)" /> : <ChevronRight size={18} color="var(--text-muted)" />}
+                          <h4>{cat.nombre}</h4>
+                          <span className="category-count">{catSubs.length} subcategorías</span>
+                        </div>
+                        <button
+                          className="btn-icon danger"
+                          onClick={(e) => { e.stopPropagation(); eliminarCategoria(cat.id, cat.nombre); }}
+                          title="Eliminar categoría"
+                          style={{ width: 32, height: 32 }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="category-body">
+                          {catSubs.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)', fontSize: '13px', fontStyle: 'italic', margin: '0 0 12px 0' }}>
+                              Sin subcategorías aún.
+                            </p>
+                          ) : (
+                            <div className="subcategory-list">
+                              {catSubs.map(sub => (
+                                <div key={sub.id} className="subcategory-item">
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Tag size={14} color="var(--accent-amber)" />
+                                    {sub.nombre}
+                                  </div>
+                                  <button
+                                    className="btn-icon danger"
+                                    onClick={() => eliminarSubcategoria(cat.id, sub.id, sub.nombre)}
+                                    title="Eliminar subcategoría"
+                                    style={{ width: 28, height: 28 }}
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Formulario agregar subcategoría */}
+                          {addingSubcategoryTo === cat.id ? (
+                            <div className="inline-form">
+                              <input
+                                type="text"
+                                placeholder="Nombre de subcategoría..."
+                                value={newSubcategoryName}
+                                onChange={(e) => setNewSubcategoryName(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && crearSubcategoria(cat.id)}
+                                autoFocus
+                              />
+                              <button className="btn-icon green" onClick={() => crearSubcategoria(cat.id)} title="Crear">
+                                <Plus size={16} />
+                              </button>
+                              <button className="btn-icon" onClick={() => { setAddingSubcategoryTo(null); setNewSubcategoryName(''); }} title="Cancelar">
+                                <XCircle size={16} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="btn-create"
+                              onClick={() => setAddingSubcategoryTo(cat.id)}
+                              style={{ marginTop: 12 }}
+                            >
+                              <Plus size={14} /> Agregar Subcategoría
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === PROYECTOS === */}
+        {vistaActual === 'proyectos' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Proyectos</h2>
+              <span className="badge">{proyectosVisibles.length}</span>
+            </div>
+
+            {/* Formulario crear proyecto (solo admin) */}
+            {userRole === 'admin' && (
+              <>
+                {!showCreateProject ? (
+                  <button className="btn-create" onClick={() => setShowCreateProject(true)} style={{ marginBottom: 20 }}>
+                    <Plus size={16} /> Crear Proyecto
+                  </button>
+                ) : (
+                  <div className="create-form-card">
+                    <h3><Briefcase size={18} /> Nuevo Proyecto</h3>
+                    <div className="form-row">
+                      <div className="input-group">
+                        <label>Nombre del Proyecto</label>
+                        <input
+                          type="text"
+                          placeholder="Ej: Edificio Central"
+                          value={newProjectName}
+                          onChange={(e) => setNewProjectName(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="input-group">
+                        <label>Descripción</label>
+                        <textarea
+                          placeholder="Descripción breve del proyecto..."
+                          value={newProjectDesc}
+                          onChange={(e) => setNewProjectDesc(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="input-group">
+                        <label>Categoría</label>
+                        <select value={newProjectCatId} onChange={(e) => { setNewProjectCatId(e.target.value); setNewProjectSubcatId(''); }}>
+                          <option value="">Seleccionar categoría...</option>
+                          {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Subcategoría</label>
+                        <select value={newProjectSubcatId} onChange={(e) => setNewProjectSubcatId(e.target.value)} disabled={!newProjectCatId}>
+                          <option value="">Seleccionar subcategoría...</option>
+                          {subcategorias.filter(s => s.categoriaId === newProjectCatId).map(s => (
+                            <option key={s.id} value={s.id}>{s.nombre}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                      <button className="btn-create" onClick={crearProyecto}>
+                        <Plus size={14} /> Crear Proyecto
+                      </button>
+                      <button className="btn-cancel" onClick={() => setShowCreateProject(false)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Listado de proyectos */}
+            {proyectosVisibles.length === 0 ? (
+              <div className="empty-state">
+                <Briefcase size={48} />
+                <p>{userRole === 'admin' ? 'No hay proyectos creados aún.' : 'No estás asignado a ningún proyecto.'}</p>
+              </div>
+            ) : (
+              <div className="project-grid">
+                {proyectosVisibles.map(p => (
+                  <div key={p.id} className="project-card" onClick={() => abrirProyectoDetalle(p)}>
+                    <div className="project-card-header">
+                      <h4 className="project-card-title">{p.nombre}</h4>
+                      <span className={`status-badge ${p.estado === 'activo' ? 'active' : 'finished'}`}>
+                        {p.estado === 'activo' ? '● Activo' : '○ Finalizado'}
+                      </span>
+                    </div>
+                    {p.descripcion && <p className="project-card-desc">{p.descripcion}</p>}
+                    <div className="project-card-meta">
+                      <span className="project-meta-tag">
+                        <Layers size={12} /> {getNombreCategoria(p.categoriaId)}
+                      </span>
+                      <span className="project-meta-tag">
+                        <Tag size={12} /> {getNombreSubcategoria(p.subcategoriaId)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === PROYECTO DETALLE === */}
+        {vistaActual === 'proyecto-detalle' && selectedProject && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('proyectos')}>
+                <ArrowLeft size={16} /> Volver a Proyectos
+              </button>
+            </div>
+
+            <div className="project-detail-header">
+              <div className="project-detail-info">
+                <h2>{selectedProject.nombre}</h2>
+                {selectedProject.descripcion && <p>{selectedProject.descripcion}</p>}
+                <div className="project-detail-tags">
+                  <span className="project-meta-tag">
+                    <Layers size={12} /> {getNombreCategoria(selectedProject.categoriaId)}
+                  </span>
+                  <span className="project-meta-tag">
+                    <Tag size={12} /> {getNombreSubcategoria(selectedProject.subcategoriaId)}
+                  </span>
+                  <span className={`status-badge ${selectedProject.estado === 'activo' ? 'active' : 'finished'}`}>
+                    {selectedProject.estado === 'activo' ? '● Activo' : '○ Finalizado'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Áreas */}
+            <div className="section-divider">
+              <h3><MapPin size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Áreas</h3>
+            </div>
+
+            {/* Crear área (solo admin) */}
+            {userRole === 'admin' && (
+              <div className="inline-form" style={{ marginTop: 0, marginBottom: 16 }}>
+                <input
+                  type="text"
+                  placeholder="Nombre del área nueva..."
+                  value={newAreaName}
+                  onChange={(e) => setNewAreaName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && crearArea(selectedProject.id)}
+                />
+                <button className="btn-icon primary" onClick={() => crearArea(selectedProject.id)} title="Crear área">
+                  <Plus size={18} />
+                </button>
+              </div>
+            )}
+
+            {projectAreas.length === 0 ? (
+              <div className="empty-state" style={{ padding: '40px 20px' }}>
+                <MapPin size={40} />
+                <p>No hay áreas creadas en este proyecto.</p>
+              </div>
+            ) : (
+              <div className="area-list">
+                {projectAreas.map(area => (
+                  <div key={area.id} className="area-card">
+                    <div className="area-card-header">
+                      <div className="area-card-title">
+                        <MapPin size={18} />
+                        {area.nombre}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {userRole === 'admin' && (
+                          <>
+                            <button
+                              className="btn-icon primary"
+                              onClick={() => openAssignModal(area.id, area.colaboradores || [])}
+                              title="Asignar colaboradores"
+                              style={{ width: 34, height: 34 }}
+                            >
+                              <UserPlus size={16} />
+                            </button>
+                            <button
+                              className="btn-icon danger"
+                              onClick={() => eliminarArea(selectedProject.id, area.id, area.nombre)}
+                              title="Eliminar área"
+                              style={{ width: 34, height: 34 }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      {(!area.colaboradores || area.colaboradores.length === 0) ? (
+                        <p className="empty-collaborators">Sin colaboradores asignados</p>
+                      ) : (
+                        <div className="collaborator-chips">
+                          {area.colaboradores.map(uid => (
+                            <span key={uid} className="collaborator-chip">
+                              <User size={12} />
+                              {getNombreUsuario(uid)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -919,6 +1706,49 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* MODAL: ASIGNAR COLABORADORES */}
+      {showAssignModal && (
+        <div className="modal-overlay" onClick={() => setShowAssignModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Asignar Colaboradores</h3>
+            <div className="user-checkbox-list">
+              {usersList
+                .filter(u => u.rol === 'colaborador' && u.activo !== false)
+                .map(u => (
+                  <label key={u.id} className="user-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedCollaborators.includes(u.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedCollaborators(prev => [...prev, u.id]);
+                        } else {
+                          setSelectedCollaborators(prev => prev.filter(id => id !== u.id));
+                        }
+                      }}
+                    />
+                    <div className="user-info">
+                      <div className="name">{u.nombre || 'Sin nombre'}</div>
+                      <div className="email">{u.correo || u.email}</div>
+                    </div>
+                  </label>
+                ))}
+              {usersList.filter(u => u.rol === 'colaborador' && u.activo !== false).length === 0 && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
+                  No hay colaboradores activos disponibles.
+                </p>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setShowAssignModal(false)}>Cancelar</button>
+              <button className="btn-create" onClick={guardarAsignacion}>
+                <Save size={14} /> Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* GITHUB ACTIONS WIDGET */}
       <div
