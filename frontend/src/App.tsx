@@ -593,7 +593,7 @@ function App() {
     }
   };
 
-  const cambiarRol = async (userId: string, nuevoRol: 'admin' | 'colaborador' | 'lector') => {
+  const cambiarRol = async (userId: string, nuevoRol: string) => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: nuevoRol });
       cargarUsuarios();
