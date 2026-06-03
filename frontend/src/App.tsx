@@ -61,6 +61,22 @@ interface Area {
   proyectoId: string;
 }
 
+interface ToastMsg {
+  id: number;
+  type: 'success' | 'error' | 'warning' | 'info';
+  message: string;
+}
+
+interface ConfirmState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => void;
+  confirmText?: string;
+  cancelText?: string;
+  isDestructive?: boolean;
+}
+
 // ===== HELPERS =====
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -577,7 +593,7 @@ function App() {
     }
   };
 
-  const cambiarRolUsuario = async (userId: string, nuevoRol: 'admin' | 'colaborador' | 'lector') => {
+  const cambiarRol = async (userId: string, nuevoRol: 'admin' | 'colaborador' | 'lector') => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: nuevoRol });
       cargarUsuarios();
@@ -588,7 +604,7 @@ function App() {
   };
 
   // ===== ACTIVAR / DESACTIVAR USUARIO =====
-  const toggleEstadoUsuario = async (userId: string, currentStatus: boolean | undefined) => {
+  const toggleUserActive = async (userId: string, currentStatus: boolean | undefined) => {
     const action = currentStatus === false ? 'activar' : 'desactivar';
     const newStatus = currentStatus === false ? true : false;
     
@@ -647,14 +663,14 @@ function App() {
     setSubcategorias(allSubs);
   };
 
-  const handleCreateCategoria = async () => {
-    if (!newCategoria.trim()) return;
+  const crearCategoria = async () => {
+    if (!newCategoryName.trim()) return;
     try {
       await addDoc(collection(db, 'categorias'), {
-        nombre: newCategoria,
+        nombre: newCategoryName,
         creadoPor: auth.currentUser?.uid
       });
-      setNewCategoria('');
+      setNewCategoryName('');
       cargarCategorias();
       showToast('success', '✅ Categoría creada exitosamente.');
     } catch {
@@ -691,14 +707,15 @@ function App() {
     );
   };
 
-  const handleCreateSubcategoria = async (catId: string) => {
-    if (!newSubcategoria[catId]?.trim()) return;
+  const crearSubcategoria = async (catId: string) => {
+    if (!newSubcategoryName.trim()) return;
     try {
       await addDoc(collection(db, 'categorias', catId, 'subcategorias'), {
-        nombre: newSubcategoria[catId],
+        nombre: newSubcategoryName,
         categoriaId: catId
       });
-      setNewSubcategoria({ ...newSubcategoria, [catId]: '' });
+      setNewSubcategoryName('');
+      setAddingSubcategoryTo(null);
       cargarSubcategorias(catId);
       showToast('success', '✅ Subcategoría creada exitosamente.');
     } catch {
@@ -750,8 +767,8 @@ function App() {
     }
   };
 
-  const handleCreateProyecto = async () => {
-    if (!newProjectName.trim() || !newProjectCat || !newProjectSubCat) {
+  const crearProyecto = async () => {
+    if (!newProjectName.trim() || !newProjectCatId || !newProjectSubcatId) {
       showToast('warning', '⚠️ Completa todos los campos obligatorios.');
       return;
     }
@@ -759,16 +776,17 @@ function App() {
       await addDoc(collection(db, 'proyectos'), {
         nombre: newProjectName,
         descripcion: newProjectDesc,
-        categoriaId: newProjectCat,
-        subcategoriaId: newProjectSubCat,
+        categoriaId: newProjectCatId,
+        subcategoriaId: newProjectSubcatId,
         creadoPor: auth.currentUser?.uid,
         fechaCreacion: serverTimestamp(),
         estado: 'activo'
       });
       setNewProjectName('');
       setNewProjectDesc('');
-      setNewProjectCat('');
-      setNewProjectSubCat('');
+      setNewProjectCatId('');
+      setNewProjectSubcatId('');
+      setShowCreateProject(false);
       cargarProyectos();
       showToast('success', '✅ Proyecto creado exitosamente.');
     } catch {
@@ -889,7 +907,7 @@ function App() {
     setShowAssignModal(true);
   };
 
-  const handleAssignCollaborators = async () => {
+  const guardarAsignacion = async () => {
     if (!selectedProject || !assignAreaId) return;
     try {
       await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', assignAreaId), {
