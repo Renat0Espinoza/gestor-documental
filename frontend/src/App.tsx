@@ -63,6 +63,8 @@ function App() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [settingsError, setSettingsError] = useState('');
+  const [phone, setPhone] = useState('');
+  const [newPhone, setNewPhone] = useState('');
 
   // --- Estado de completar perfil (primer inicio de sesión) ---
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -117,6 +119,9 @@ function App() {
               // Actualizar displayName desde Firestore si existe
               if (data.nombre) {
                 setDisplayName(data.nombre);
+              }
+              if (data.telefono) {
+                setPhone(data.telefono);
               }
             }
           } else {
@@ -240,14 +245,27 @@ function App() {
     window.open(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, '_blank');
   };
 
-  // --- CONFIGURACIÓN ---
-  const abrirConfiguracion = () => {
+  const abrirConfiguracion = async () => {
     setNewDisplayName(displayName);
     setNewEmail(auth.currentUser?.email || '');
     setNewPassword('');
     setCurrentPassword('');
     setSettingsSuccess('');
     setSettingsError('');
+
+    if (auth.currentUser) {
+      try {
+        const docRef = doc(db, 'users', auth.currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setPhone(data.telefono || '');
+          setNewPhone(data.telefono || '');
+        }
+      } catch (err) {
+        console.error("Error al obtener teléfono:", err);
+      }
+    }
     setVistaActual('configuracion');
   };
 
@@ -268,17 +286,38 @@ function App() {
         await reauthenticateWithCredential(auth.currentUser, credential);
       }
 
+      if (newPhone.trim() !== phone) {
+        const phoneClean = newPhone.replace(/[\s\-\+\(\)]/g, '');
+        if (!/^\d{8,15}$/.test(phoneClean)) {
+          setSettingsError('Ingresa un número de teléfono válido (8-15 dígitos).');
+          return;
+        }
+      }
+
+      const updates: any = {};
+
       if (newDisplayName.trim() !== displayName) {
         await updateProfile(auth.currentUser, { displayName: newDisplayName.trim() });
         setDisplayName(newDisplayName.trim());
+        updates.nombre = newDisplayName.trim();
       }
 
       if (newEmail !== auth.currentUser.email) {
         await updateEmail(auth.currentUser, newEmail);
+        updates.correo = newEmail;
       }
 
       if (newPassword.length > 0) {
         await updatePassword(auth.currentUser, newPassword);
+      }
+
+      if (newPhone.trim() !== phone) {
+        updates.telefono = newPhone.trim();
+        setPhone(newPhone.trim());
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), updates);
       }
 
       setSettingsSuccess('✅ Perfil actualizado correctamente.');
@@ -820,6 +859,20 @@ function App() {
                       value={newEmail}
                       onChange={(e) => setNewEmail(e.target.value)}
                       placeholder="ejemplo@ubiobio.cl"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="input-group">
+                  <label>Número de Teléfono</label>
+                  <div className="input-wrapper">
+                    <Phone size={18} />
+                    <input
+                      type="tel"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      placeholder="+56 9 1234 5678"
                       required
                     />
                   </div>
