@@ -343,12 +343,12 @@ function App() {
       snap.forEach(d => docs.push({ id: d.id, ...d.data() } as DocumentoFirestore));
       setDocumentosFS(docs);
 
-      const mergedFiles = filesFromApi.map(f => {
+      const mergedFiles: FileInfo[] = filesFromApi.map(f => {
         const fDoc = docs.find(d => d.filename === f.name);
         if (fDoc) {
-          return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id, estado: fDoc.estado || 'activo' };
+          return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id, estado: (fDoc.estado || 'activo') as 'activo' | 'papelera' };
         }
-        return { ...f, estado: 'activo' };
+        return { ...f, estado: 'activo' as 'activo' | 'papelera' };
       });
 
       // Filtro para Colaboradores: Solo ver archivos de proyectos asignados
@@ -396,10 +396,10 @@ function App() {
         const res = await axios.get(`${API_BASE}/api/search`, { params: { q: query } });
         const filesFromApi: FileInfo[] = res.data;
         
-        const mergedFiles = filesFromApi.map(f => {
+        const mergedFiles: FileInfo[] = filesFromApi.map(f => {
           const fDoc = documentosFS.find(d => d.filename === f.name);
-          if (fDoc) return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id, estado: fDoc.estado || 'activo' };
-          return { ...f, estado: 'activo' };
+          if (fDoc) return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id, estado: (fDoc.estado || 'activo') as 'activo' | 'papelera' };
+          return { ...f, estado: 'activo' as 'activo' | 'papelera' };
         });
 
         let filteredFiles = mergedFiles;
