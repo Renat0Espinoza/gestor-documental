@@ -1418,6 +1418,58 @@ html, body, #root {
   background: var(--border-subtle);
 }
 
+/* ===== PROJECT CARD ACTIONS ===== */
+.project-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.btn-status-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+  border: 1px solid;
+}
+.btn-status-toggle.finalizar {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.2);
+  color: var(--accent-amber);
+}
+.btn-status-toggle.finalizar:hover {
+  background: rgba(251, 191, 36, 0.15);
+  transform: none;
+  box-shadow: none;
+}
+.btn-status-toggle.activar {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.2);
+  color: var(--accent-green);
+}
+.btn-status-toggle.activar:hover {
+  background: rgba(52, 211, 153, 0.15);
+  transform: none;
+  box-shadow: none;
+}
+
+/* ===== PROJECT DETAIL ACTIONS ===== */
+.project-detail-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-left: 16px;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
   .app-header { padding: 14px 20px; }
@@ -1426,6 +1478,10 @@ html, body, #root {
   .panel { padding: 24px 18px; }
   .login-card { margin: 16px; padding: 36px 28px; }
   .profile-modal { margin: 16px; padding: 36px 28px; }
+  .project-grid { grid-template-columns: 1fr; }
+  .project-detail-header { flex-direction: column; gap: 16px; }
+  .project-detail-actions { margin-left: 0; }
+  .project-card-actions { flex-wrap: wrap; }
 }
 @media (max-width: 480px) {
   .card-grid { grid-template-columns: 1fr; }

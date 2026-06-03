@@ -6,7 +6,7 @@ import {
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
   Filter, Users, History, Shield, Eye, Phone, Loader2,
   Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
-  UserPlus, UserX, Tag
+  UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase';
@@ -18,6 +18,18 @@ interface FileInfo {
   name: string;
   size: number;
   modified: string | null;
+  proyectoId?: string;
+  fsId?: string;
+}
+
+interface DocumentoFirestore {
+  id: string;
+  filename: string;
+  originalName: string;
+  size: number;
+  proyectoId: string;
+  subidoPor: string;
+  fechaCreacion: any;
 }
 
 interface Categoria {
@@ -135,6 +147,10 @@ function App() {
   const [assignAreaId, setAssignAreaId] = useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = useState<string[]>([]);
 
+  // --- Documentos en Firestore ---
+  const [documentosFS, setDocumentosFS] = useState<DocumentoFirestore[]>([]);
+  const [uploadProyectoId, setUploadProyectoId] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -243,8 +259,32 @@ function App() {
       const response = await axios.post(`${API_BASE}/api/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      alert(`✅ ¡Subida exitosa!\nArchivo: ${response.data.file}`);
-      registrarAuditoria('Subió el archivo', response.data.file || file.name);
+      
+      const fileName = response.data.file;
+
+      // Guardar metadatos en Firestore si se seleccionó un proyecto
+      if (uploadProyectoId) {
+        await addDoc(collection(db, 'documentos'), {
+          filename: fileName,
+          originalName: file.name,
+          size: file.size,
+          proyectoId: uploadProyectoId,
+          subidoPor: auth.currentUser?.uid || '',
+          fechaCreacion: serverTimestamp()
+        });
+      }
+
+      alert(`✅ ¡Subida exitosa!\nArchivo: ${fileName}`);
+      registrarAuditoria('Subió el archivo', fileName || file.name);
+
+      // Si estábamos en el explorador, recargarlo
+      if (vistaActual === 'explorador') {
+        abrirExplorador();
+      }
+      // Si estábamos en un proyecto, recargar el explorador interno actualizando la lista de archivos global
+      if (vistaActual === 'proyecto-detalle') {
+        abrirExploradorContexto();
+      }
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 413) {
         alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
@@ -253,14 +293,46 @@ function App() {
       }
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
+      setUploadProyectoId(null);
+    }
+  };
+
+  // ===== CARGAR METADATOS Y ARCHIVOS =====
+  const abrirExploradorContexto = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/files`);
+      const filesFromApi: FileInfo[] = response.data;
+      
+      const snap = await getDocs(collection(db, 'documentos'));
+      const docs: DocumentoFirestore[] = [];
+      snap.forEach(d => docs.push({ id: d.id, ...d.data() } as DocumentoFirestore));
+      setDocumentosFS(docs);
+
+      const mergedFiles = filesFromApi.map(f => {
+        const fDoc = docs.find(d => d.filename === f.name);
+        if (fDoc) {
+          return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id };
+        }
+        return f;
+      });
+
+      // Filtro para Colaboradores: Solo ver archivos de proyectos asignados
+      let filteredFiles = mergedFiles;
+      if (userRole !== 'admin') {
+        const visibleProjectIds = proyectosVisibles.map(p => p.id);
+        filteredFiles = mergedFiles.filter(f => f.proyectoId && visibleProjectIds.includes(f.proyectoId));
+      }
+
+      setListaArchivos(filteredFiles);
+    } catch (err) {
+      console.error(err);
     }
   };
 
   // ===== EXPLORADOR =====
   const abrirExplorador = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/api/files`);
-      setListaArchivos(response.data);
+      await abrirExploradorContexto();
       setVistaActual('explorador');
     } catch {
       alert('❌ Error al conectar con el servidor para ver los archivos.');
@@ -287,7 +359,21 @@ function App() {
       setSearching(true);
       try {
         const res = await axios.get(`${API_BASE}/api/search`, { params: { q: query } });
-        setSearchResults(res.data);
+        const filesFromApi: FileInfo[] = res.data;
+        
+        const mergedFiles = filesFromApi.map(f => {
+          const fDoc = documentosFS.find(d => d.filename === f.name);
+          if (fDoc) return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id };
+          return f;
+        });
+
+        let filteredFiles = mergedFiles;
+        if (userRole !== 'admin') {
+          const visibleProjectIds = proyectosVisibles.map(p => p.id);
+          filteredFiles = mergedFiles.filter(f => f.proyectoId && visibleProjectIds.includes(f.proyectoId));
+        }
+
+        setSearchResults(filteredFiles);
       } catch {
         setSearchResults([]);
       } finally {
@@ -411,21 +497,35 @@ function App() {
   };
 
   // ===== ELIMINAR ARCHIVO =====
-  const handleDelete = async (filename: string) => {
+  const handleDelete = async (archivo: FileInfo) => {
     if (userRole === 'lector') return;
 
-    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${filename}"`);
+    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${archivo.name}"`);
     if (!primera) return;
 
     const segunda = confirm('⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?');
     if (!segunda) return;
 
     try {
-      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
+      // Eliminar del almacenamiento local
+      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(archivo.name)}`);
+      
+      // Eliminar de Firestore si tiene registro
+      if (archivo.fsId) {
+        await deleteDoc(doc(db, 'documentos', archivo.fsId));
+      }
+      
       alert('🗑️ Archivo eliminado correctamente.');
-      registrarAuditoria('Eliminó el archivo', filename);
-      const response = await axios.get(`${API_BASE}/api/files`);
-      setListaArchivos(response.data);
+      registrarAuditoria('Eliminó el archivo', archivo.name);
+      
+      if (vistaActual === 'explorador') {
+        abrirExplorador();
+      } else if (vistaActual === 'proyecto-detalle') {
+        abrirExploradorContexto();
+      } else {
+        const response = await axios.get(`${API_BASE}/api/files`);
+        setListaArchivos(response.data); // fallback
+      }
     } catch {
       alert('❌ Error al intentar eliminar el archivo.');
     }
@@ -626,6 +726,43 @@ function App() {
     }
   };
 
+  const eliminarProyecto = async (proyecto: Proyecto) => {
+    const primera = confirm(`¿Estás seguro de que deseas eliminar el proyecto "${proyecto.nombre}"?`);
+    if (!primera) return;
+    const segunda = confirm('⚠️ Se eliminarán también todas las áreas y asignaciones de este proyecto.\n¿Confirmas la eliminación?');
+    if (!segunda) return;
+    try {
+      // Eliminar áreas del proyecto primero
+      const areasSnap = await getDocs(collection(db, 'proyectos', proyecto.id, 'areas'));
+      for (const aDoc of areasSnap.docs) {
+        await deleteDoc(doc(db, 'proyectos', proyecto.id, 'areas', aDoc.id));
+      }
+      await deleteDoc(doc(db, 'proyectos', proyecto.id));
+      cargarProyectos();
+      registrarAuditoria('Eliminó proyecto', proyecto.nombre);
+      alert('🗑️ Proyecto eliminado correctamente.');
+    } catch {
+      alert('❌ Error al eliminar el proyecto.');
+    }
+  };
+
+  const toggleEstadoProyecto = async (proyecto: Proyecto) => {
+    const nuevoEstado = proyecto.estado === 'activo' ? 'finalizado' : 'activo';
+    const confirmed = confirm(`¿Cambiar el estado del proyecto "${proyecto.nombre}" a ${nuevoEstado.toUpperCase()}?`);
+    if (!confirmed) return;
+    try {
+      await updateDoc(doc(db, 'proyectos', proyecto.id), { estado: nuevoEstado });
+      // Actualizar el proyecto seleccionado si estamos en detalle
+      if (selectedProject?.id === proyecto.id) {
+        setSelectedProject({ ...proyecto, estado: nuevoEstado as 'activo' | 'finalizado' });
+      }
+      cargarProyectos();
+      registrarAuditoria(`Cambió estado de proyecto a ${nuevoEstado}`, proyecto.nombre);
+    } catch {
+      alert('❌ Error al cambiar el estado del proyecto.');
+    }
+  };
+
   // ===== ÁREAS =====
   const cargarAreas = async (proyectoId: string) => {
     try {
@@ -692,6 +829,7 @@ function App() {
     setSelectedProject(proyecto);
     await cargarAreas(proyecto.id);
     await cargarUsuarios();
+    await abrirExploradorContexto(); // Cargar metadata de archivos
     setVistaActual('proyecto-detalle');
   };
 
@@ -710,15 +848,12 @@ function App() {
     setVistaActual('categorias');
   };
 
-  // ===== HELPER: obtener proyectos visibles según rol =====
-  const getProyectosVisibles = () => {
-    if (userRole === 'admin') return proyectos;
-    // Colaboradores: solo proyectos donde están asignados a al menos un área
+  // ===== HELPER: obtener áreas visibles según rol =====
+  const getAreasVisibles = () => {
+    if (userRole === 'admin') return projectAreas;
     const uid = auth.currentUser?.uid;
     if (!uid) return [];
-    // Necesitamos filtrar según las áreas cargadas — para la lista usamos todos los proyectos
-    // y filtramos basándonos en si el usuario aparece en alguna área
-    return proyectos;
+    return projectAreas.filter(area => area.colaboradores && area.colaboradores.includes(uid));
   };
 
   // Filtrado real se hace al cargar — pero para la vista de lista necesitamos una versión
@@ -756,7 +891,10 @@ function App() {
   // ===== COMPONENTE DE LISTA DE ARCHIVOS =====
   const renderFileList = (files: FileInfo[]) => (
     <div className="file-list">
-      {files.map((archivo, index) => (
+      {files.map((archivo, index) => {
+        const fileProject = proyectos.find(p => p.id === archivo.proyectoId);
+        
+        return (
         <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
           <div className="file-icon">
             <FileText size={20} color="#f87171" />
@@ -766,6 +904,17 @@ function App() {
             <div className="file-meta">
               {formatFileSize(archivo.size)}
               {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+              
+              {fileProject && (
+                <div style={{ marginTop: '4px', display: 'flex', gap: '8px' }}>
+                  <span className="project-meta-tag" style={{ fontSize: '10px', padding: '2px 8px' }}>
+                    <Briefcase size={10} /> {fileProject.nombre}
+                  </span>
+                  <span className="project-meta-tag" style={{ fontSize: '10px', padding: '2px 8px' }}>
+                    <Layers size={10} /> {getNombreCategoria(fileProject.categoriaId)}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
           <div className="file-actions">
@@ -774,13 +923,13 @@ function App() {
               Descargar
             </button>
             {userRole !== 'lector' && (
-              <button className="file-delete" onClick={() => handleDelete(archivo.name)} title="Eliminar archivo">
+              <button className="file-delete" onClick={() => handleDelete(archivo)} title="Eliminar archivo">
                 <Trash2 size={14} />
               </button>
             )}
           </div>
         </div>
-      ))}
+      )})}
     </div>
   );
 
@@ -965,42 +1114,7 @@ function App() {
               </div>
             )}
 
-            {/* SECCIÓN: DOCUMENTOS */}
-            <div className="dashboard-section">
-              <div className="section-label">
-                <FileText size={14} />
-                Documentos
-              </div>
-              <div className="card-grid">
-                {userRole !== 'lector' && (
-                  <button className="action-card" onClick={() => fileInputRef.current?.click()}>
-                    <div className="card-icon blue">
-                      <UploadCloud size={26} color="#4f8cff" />
-                    </div>
-                    <h3>Subir Documento</h3>
-                    <p>Cargar nuevos archivos PDF al sistema (limite 10mb)</p>
-                  </button>
-                )}
-
-                <button className="action-card" onClick={abrirExplorador}>
-                  <div className="card-icon green">
-                    <FolderOpen size={26} color="#34d399" />
-                  </div>
-                  <h3>Explorar Archivos</h3>
-                  <p>Ver listado de documentos guardados</p>
-                </button>
-
-                <button className="action-card" onClick={abrirBusqueda}>
-                  <div className="card-icon amber">
-                    <Search size={26} color="#fbbf24" />
-                  </div>
-                  <h3>Buscar</h3>
-                  <p>Encontrar archivos por nombre</p>
-                </button>
-              </div>
-            </div>
-
-            {/* SECCIÓN: GESTIÓN */}
+            {/* SECCIÓN: GESTIÓN (Proyectos primero, más importante) */}
             <div className="dashboard-section">
               <div className="section-label">
                 <Briefcase size={14} />
@@ -1024,6 +1138,44 @@ function App() {
                     <p>Gestionar categorías y subcategorías</p>
                   </button>
                 )}
+              </div>
+            </div>
+
+            {/* SECCIÓN: DOCUMENTOS */}
+            <div className="dashboard-section">
+              <div className="section-label">
+                <FileText size={14} />
+                Documentos
+              </div>
+              <div className="card-grid">
+                {userRole === 'admin' && (
+                  <button className="action-card" onClick={() => {
+                    setUploadProyectoId(null);
+                    fileInputRef.current?.click();
+                  }}>
+                    <div className="card-icon blue">
+                      <UploadCloud size={26} color="#4f8cff" />
+                    </div>
+                    <h3>Subir Documento Huérfano</h3>
+                    <p>Subir archivos sin proyecto (solo admin)</p>
+                  </button>
+                )}
+
+                <button className="action-card" onClick={abrirExplorador}>
+                  <div className="card-icon green">
+                    <FolderOpen size={26} color="#34d399" />
+                  </div>
+                  <h3>Explorar Archivos</h3>
+                  <p>Ver listado de documentos guardados</p>
+                </button>
+
+                <button className="action-card" onClick={abrirBusqueda}>
+                  <div className="card-icon amber">
+                    <Search size={26} color="#fbbf24" />
+                  </div>
+                  <h3>Buscar</h3>
+                  <p>Encontrar archivos por nombre</p>
+                </button>
               </div>
             </div>
 
@@ -1497,6 +1649,27 @@ function App() {
                         <Tag size={12} /> {getNombreSubcategoria(p.subcategoriaId)}
                       </span>
                     </div>
+                    {/* Botones de acción admin sobre tarjeta */}
+                    {userRole === 'admin' && (
+                      <div className="project-card-actions" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className={`btn-status-toggle ${p.estado === 'activo' ? 'finalizar' : 'activar'}`}
+                          onClick={() => toggleEstadoProyecto(p)}
+                          title={p.estado === 'activo' ? 'Finalizar proyecto' : 'Reactivar proyecto'}
+                        >
+                          {p.estado === 'activo' ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+                          {p.estado === 'activo' ? 'Finalizar' : 'Reactivar'}
+                        </button>
+                        <button
+                          className="btn-icon danger"
+                          onClick={() => eliminarProyecto(p)}
+                          title="Eliminar proyecto"
+                          style={{ width: 32, height: 32 }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1508,7 +1681,7 @@ function App() {
         {vistaActual === 'proyecto-detalle' && selectedProject && (
           <div className="panel">
             <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('proyectos')}>
+              <button className="btn-back" onClick={() => { setVistaActual('proyectos'); abrirProyectos(); }}>
                 <ArrowLeft size={16} /> Volver a Proyectos
               </button>
             </div>
@@ -1529,11 +1702,32 @@ function App() {
                   </span>
                 </div>
               </div>
+              {/* Acciones de proyecto (admin) */}
+              {userRole === 'admin' && (
+                <div className="project-detail-actions">
+                  <button
+                    className={`btn-status-toggle ${selectedProject.estado === 'activo' ? 'finalizar' : 'activar'}`}
+                    onClick={() => toggleEstadoProyecto(selectedProject)}
+                    title={selectedProject.estado === 'activo' ? 'Finalizar proyecto' : 'Reactivar proyecto'}
+                  >
+                    {selectedProject.estado === 'activo' ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+                    {selectedProject.estado === 'activo' ? 'Finalizar' : 'Reactivar'}
+                  </button>
+                  <button
+                    className="btn-icon danger"
+                    onClick={() => { eliminarProyecto(selectedProject).then(() => { setVistaActual('proyectos'); abrirProyectos(); }); }}
+                    title="Eliminar proyecto"
+                    style={{ width: 36, height: 36 }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Áreas */}
             <div className="section-divider">
-              <h3><MapPin size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Áreas</h3>
+              <h3><MapPin size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Áreas{userRole !== 'admin' && ' asignadas'}</h3>
             </div>
 
             {/* Crear área (solo admin) */}
@@ -1552,14 +1746,14 @@ function App() {
               </div>
             )}
 
-            {projectAreas.length === 0 ? (
+            {getAreasVisibles().length === 0 ? (
               <div className="empty-state" style={{ padding: '40px 20px' }}>
                 <MapPin size={40} />
-                <p>No hay áreas creadas en este proyecto.</p>
+                <p>{userRole === 'admin' ? 'No hay áreas creadas en este proyecto.' : 'No estás asignado a ningún área de este proyecto.'}</p>
               </div>
             ) : (
               <div className="area-list">
-                {projectAreas.map(area => (
+                {getAreasVisibles().map(area => (
                   <div key={area.id} className="area-card">
                     <div className="area-card-header">
                       <div className="area-card-title">
@@ -1605,6 +1799,35 @@ function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Documentos del Proyecto */}
+            <div className="section-divider" style={{ marginTop: '32px' }}>
+              <h3><FileText size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Documentos del Proyecto</h3>
+            </div>
+
+            {userRole !== 'lector' && (
+              <button 
+                className="btn-create" 
+                style={{ marginBottom: 16 }}
+                onClick={() => {
+                  setUploadProyectoId(selectedProject.id);
+                  fileInputRef.current?.click();
+                }}
+              >
+                <UploadCloud size={16} /> Subir Documento a este Proyecto
+              </button>
+            )}
+
+            {listaArchivos.filter(f => f.proyectoId === selectedProject.id).length === 0 ? (
+              <div className="empty-state" style={{ padding: '20px' }}>
+                <Inbox size={40} />
+                <p>No hay documentos asociados a este proyecto.</p>
+              </div>
+            ) : (
+              <div style={{ background: 'var(--bg-glass)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '16px' }}>
+                {renderFileList(listaArchivos.filter(f => f.proyectoId === selectedProject.id))}
               </div>
             )}
           </div>
