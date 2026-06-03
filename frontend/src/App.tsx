@@ -6,7 +6,7 @@ import {
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
   Filter, Users, History, Shield, Eye, Phone, Loader2,
   Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
-  UserPlus, UserX, Tag, ToggleLeft, ToggleRight
+  UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle, Info
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase';
@@ -151,6 +151,21 @@ function App() {
   const [documentosFS, setDocumentosFS] = useState<DocumentoFirestore[]>([]);
   const [uploadProyectoId, setUploadProyectoId] = useState<string | null>(null);
 
+  // --- UI Global ---
+  const [toasts, setToasts] = useState<ToastMsg[]>([]);
+  const showToast = (type: ToastMsg['type'], message: string) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
+  const [confirmState, setConfirmState] = useState<ConfirmState>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+  const showConfirm = (title: string, message: string, onConfirm: () => void, isDestructive = false, confirmText = 'Confirmar', cancelText = 'Cancelar') => {
+    setConfirmState({ isOpen: true, title, message, onConfirm, isDestructive, confirmText, cancelText });
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -242,12 +257,12 @@ function App() {
     if (!file) return;
 
     if (file.type !== 'application/pdf') {
-      alert('⚠️ Por favor, selecciona únicamente archivos PDF.');
+      showToast('warning', '⚠️ Por favor, selecciona únicamente archivos PDF.');
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+      showToast('warning', '⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -274,7 +289,7 @@ function App() {
         });
       }
 
-      alert(`✅ ¡Subida exitosa!\nArchivo: ${fileName}`);
+      showToast('success', `✅ ¡Subida exitosa!\nArchivo: ${fileName}`);
       registrarAuditoria('Subió el archivo', fileName || file.name);
 
       // Si estábamos en el explorador, recargarlo
@@ -287,9 +302,9 @@ function App() {
       }
     } catch (err: unknown) {
       if (axios.isAxiosError(err) && err.response?.status === 413) {
-        alert('⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+        showToast('warning', '⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
       } else {
-        alert('❌ Hubo un error al intentar subir el archivo al servidor.');
+        showToast('error', '❌ Hubo un error al intentar subir el archivo al servidor.');
       }
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -335,7 +350,7 @@ function App() {
       await abrirExploradorContexto();
       setVistaActual('explorador');
     } catch {
-      alert('❌ Error al conectar con el servidor para ver los archivos.');
+      showToast('error', '❌ Error al conectar con el servidor para ver los archivos.');
     }
   };
 
@@ -383,18 +398,23 @@ function App() {
   };
 
   // ===== FILTROS AVANZADOS =====
-  const filteredSearchResults = searchResults.filter(f => {
-    let matchExt = true;
-    if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
+  const aplicarFiltrosAvanzados = (archivos: FileInfo[]) => {
+    return archivos.filter(f => {
+      let matchExt = true;
+      if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
 
-    let matchSize = true;
-    if (filterSize !== 'all') {
-      if (filterSize === 'small') matchSize = f.size < 1024 * 1024;
-      else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
-      else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
-    }
-    return matchExt && matchSize;
-  });
+      let matchSize = true;
+      if (filterSize !== 'all') {
+        if (filterSize === 'small') matchSize = f.size < 1024 * 1024;
+        else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
+        else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
+      }
+      return matchExt && matchSize;
+    });
+  };
+
+  const filteredSearchResults = aplicarFiltrosAvanzados(searchResults);
+  const filteredExploradorResults = aplicarFiltrosAvanzados(listaArchivos);
 
   const handleDownload = (filename: string) => {
     registrarAuditoria('Descargó el archivo', filename);
@@ -500,35 +520,47 @@ function App() {
   const handleDelete = async (archivo: FileInfo) => {
     if (userRole === 'lector') return;
 
-    const primera = confirm(`¿Estás seguro de que deseas eliminar el archivo?\n\n"${archivo.name}"`);
-    if (!primera) return;
-
-    const segunda = confirm('⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?');
-    if (!segunda) return;
-
-    try {
-      // Eliminar del almacenamiento local
-      await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(archivo.name)}`);
-      
-      // Eliminar de Firestore si tiene registro
-      if (archivo.fsId) {
-        await deleteDoc(doc(db, 'documentos', archivo.fsId));
-      }
-      
-      alert('🗑️ Archivo eliminado correctamente.');
-      registrarAuditoria('Eliminó el archivo', archivo.name);
-      
-      if (vistaActual === 'explorador') {
-        abrirExplorador();
-      } else if (vistaActual === 'proyecto-detalle') {
-        abrirExploradorContexto();
-      } else {
-        const response = await axios.get(`${API_BASE}/api/files`);
-        setListaArchivos(response.data); // fallback
-      }
-    } catch {
-      alert('❌ Error al intentar eliminar el archivo.');
-    }
+    showConfirm(
+      'Eliminar Archivo',
+      `¿Estás seguro de que deseas eliminar el archivo?\n\n"${archivo.name}"`,
+      () => {
+        showConfirm(
+          'Confirmación Irreversible',
+          '⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?',
+          async () => {
+            try {
+              // Eliminar del almacenamiento local
+              await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(archivo.name)}`);
+              
+              // Eliminar de Firestore si tiene registro
+              if (archivo.fsId) {
+                await deleteDoc(doc(db, 'documentos', archivo.fsId));
+              }
+              
+              showToast('success', '🗑️ Archivo eliminado correctamente.');
+              registrarAuditoria('Eliminó el archivo', archivo.name);
+              
+              if (vistaActual === 'explorador') {
+                abrirExplorador();
+              } else if (vistaActual === 'proyecto-detalle') {
+                abrirExploradorContexto();
+              } else {
+                const response = await axios.get(`${API_BASE}/api/files`);
+                setListaArchivos(response.data); // fallback
+              }
+            } catch {
+              showToast('error', '❌ Error al intentar eliminar el archivo.');
+            }
+          },
+          true,
+          'Eliminar Permanentemente',
+          'Cancelar'
+        );
+      },
+      true,
+      'Continuar',
+      'Cancelar'
+    );
   };
 
   // ===== USUARIOS =====
@@ -545,35 +577,37 @@ function App() {
     }
   };
 
-  const cambiarRol = async (id: string, nuevoRol: string) => {
+  const cambiarRolUsuario = async (userId: string, nuevoRol: 'admin' | 'colaborador' | 'lector') => {
     try {
-      await updateDoc(doc(db, 'users', id), { rol: nuevoRol });
+      await updateDoc(doc(db, 'users', userId), { role: nuevoRol });
       cargarUsuarios();
-      registrarAuditoria(`Cambió rol a ${nuevoRol.toUpperCase()}`, `Usuario ID: ${id}`);
-      alert('✅ Rol actualizado correctamente.');
-    } catch (err) {
-      alert("Error al cambiar el rol");
+      showToast('success', '✅ Rol actualizado correctamente.');
+    } catch {
+      showToast('error', "Error al cambiar el rol");
     }
   };
 
   // ===== ACTIVAR / DESACTIVAR USUARIO =====
-  const toggleUserActive = async (userId: string, currentlyActive: boolean) => {
-    const newStatus = !currentlyActive;
-    const action = newStatus ? 'activar' : 'desactivar';
-    const confirmed = confirm(`¿Estás seguro de que deseas ${action} a este usuario?`);
-    if (!confirmed) return;
-
-    try {
-      await updateDoc(doc(db, 'users', userId), { activo: newStatus });
-      cargarUsuarios();
-      registrarAuditoria(
-        newStatus ? 'Activó al usuario' : 'Desactivó al usuario',
-        `Usuario ID: ${userId}`
-      );
-      alert(`✅ Usuario ${newStatus ? 'activado' : 'desactivado'} correctamente.`);
-    } catch {
-      alert('❌ Error al cambiar el estado del usuario.');
-    }
+  const toggleEstadoUsuario = async (userId: string, currentStatus: boolean | undefined) => {
+    const action = currentStatus === false ? 'activar' : 'desactivar';
+    const newStatus = currentStatus === false ? true : false;
+    
+    showConfirm(
+      `${action.charAt(0).toUpperCase() + action.slice(1)} Usuario`,
+      `¿Estás seguro de que deseas ${action} a este usuario?`,
+      async () => {
+        try {
+          await updateDoc(doc(db, 'users', userId), { activo: newStatus });
+          cargarUsuarios();
+          showToast('success', `✅ Usuario ${newStatus ? 'activado' : 'desactivado'} correctamente.`);
+        } catch {
+          showToast('error', '❌ Error al cambiar el estado del usuario.');
+        }
+      },
+      !newStatus,
+      'Confirmar',
+      'Cancelar'
+    );
   };
 
   // ===== CATEGORÍAS =====
@@ -613,65 +647,82 @@ function App() {
     setSubcategorias(allSubs);
   };
 
-  const crearCategoria = async () => {
-    if (!newCategoryName.trim()) return;
+  const handleCreateCategoria = async () => {
+    if (!newCategoria.trim()) return;
     try {
       await addDoc(collection(db, 'categorias'), {
-        nombre: newCategoryName.trim(),
-        creadoPor: auth.currentUser?.uid || '',
-        fechaCreacion: serverTimestamp()
+        nombre: newCategoria,
+        creadoPor: auth.currentUser?.uid
       });
-      setNewCategoryName('');
+      setNewCategoria('');
       cargarCategorias();
-      registrarAuditoria('Creó categoría', newCategoryName.trim());
+      showToast('success', '✅ Categoría creada exitosamente.');
     } catch {
-      alert('❌ Error al crear la categoría.');
+      showToast('error', '❌ Error al crear la categoría.');
     }
   };
 
   const eliminarCategoria = async (catId: string, catName: string) => {
-    const confirmed = confirm(`¿Eliminar la categoría "${catName}" y todas sus subcategorías?`);
-    if (!confirmed) return;
-    try {
-      // Eliminar subcategorías primero
-      const subSnap = await getDocs(collection(db, 'categorias', catId, 'subcategorias'));
-      for (const s of subSnap.docs) {
-        await deleteDoc(doc(db, 'categorias', catId, 'subcategorias', s.id));
-      }
-      await deleteDoc(doc(db, 'categorias', catId));
-      cargarCategorias();
-      setSubcategorias(prev => prev.filter(s => s.categoriaId !== catId));
-      registrarAuditoria('Eliminó categoría', catName);
-    } catch {
-      alert('❌ Error al eliminar la categoría.');
+    const projectExists = proyectos.some(p => p.categoriaId === catId);
+    if (projectExists) {
+      showToast('warning', `No puedes eliminar la categoría "${catName}" porque tiene proyectos asociados.`);
+      return;
     }
+
+    showConfirm(
+      'Eliminar Categoría',
+      `¿Eliminar la categoría "${catName}" y todas sus subcategorías?`,
+      async () => {
+        try {
+          const subsSnap = await getDocs(collection(db, 'categorias', catId, 'subcategorias'));
+          for (const sDoc of subsSnap.docs) {
+            await deleteDoc(doc(db, 'categorias', catId, 'subcategorias', sDoc.id));
+          }
+          await deleteDoc(doc(db, 'categorias', catId));
+          cargarCategorias();
+          showToast('success', '🗑️ Categoría eliminada.');
+        } catch {
+          showToast('error', '❌ Error al eliminar la categoría.');
+        }
+      },
+      true,
+      'Eliminar',
+      'Cancelar'
+    );
   };
 
-  const crearSubcategoria = async (categoriaId: string) => {
-    if (!newSubcategoryName.trim()) return;
+  const handleCreateSubcategoria = async (catId: string) => {
+    if (!newSubcategoria[catId]?.trim()) return;
     try {
-      await addDoc(collection(db, 'categorias', categoriaId, 'subcategorias'), {
-        nombre: newSubcategoryName.trim()
+      await addDoc(collection(db, 'categorias', catId, 'subcategorias'), {
+        nombre: newSubcategoria[catId],
+        categoriaId: catId
       });
-      setNewSubcategoryName('');
-      setAddingSubcategoryTo(null);
-      cargarSubcategorias(categoriaId);
-      registrarAuditoria('Creó subcategoría', newSubcategoryName.trim());
+      setNewSubcategoria({ ...newSubcategoria, [catId]: '' });
+      cargarSubcategorias(catId);
+      showToast('success', '✅ Subcategoría creada exitosamente.');
     } catch {
-      alert('❌ Error al crear la subcategoría.');
+      showToast('error', '❌ Error al crear la subcategoría.');
     }
   };
 
-  const eliminarSubcategoria = async (categoriaId: string, subId: string, subName: string) => {
-    const confirmed = confirm(`¿Eliminar la subcategoría "${subName}"?`);
-    if (!confirmed) return;
-    try {
-      await deleteDoc(doc(db, 'categorias', categoriaId, 'subcategorias', subId));
-      cargarSubcategorias(categoriaId);
-      registrarAuditoria('Eliminó subcategoría', subName);
-    } catch {
-      alert('❌ Error al eliminar.');
-    }
+  const eliminarSubcategoria = async (catId: string, subId: string, subName: string) => {
+    showConfirm(
+      'Eliminar Subcategoría',
+      `¿Eliminar la subcategoría "${subName}"?`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'categorias', catId, 'subcategorias', subId));
+          cargarSubcategorias(catId);
+          showToast('success', '🗑️ Subcategoría eliminada.');
+        } catch {
+          showToast('error', '❌ Error al eliminar.');
+        }
+      },
+      true,
+      'Eliminar',
+      'Cancelar'
+    );
   };
 
   const toggleCategory = (catId: string) => {
@@ -699,68 +750,89 @@ function App() {
     }
   };
 
-  const crearProyecto = async () => {
-    if (!newProjectName.trim() || !newProjectCatId || !newProjectSubcatId) {
-      alert('⚠️ Completa todos los campos obligatorios.');
+  const handleCreateProyecto = async () => {
+    if (!newProjectName.trim() || !newProjectCat || !newProjectSubCat) {
+      showToast('warning', '⚠️ Completa todos los campos obligatorios.');
       return;
     }
     try {
       await addDoc(collection(db, 'proyectos'), {
-        nombre: newProjectName.trim(),
-        descripcion: newProjectDesc.trim(),
-        categoriaId: newProjectCatId,
-        subcategoriaId: newProjectSubcatId,
-        estado: 'activo',
-        creadoPor: auth.currentUser?.uid || '',
-        fechaCreacion: serverTimestamp()
+        nombre: newProjectName,
+        descripcion: newProjectDesc,
+        categoriaId: newProjectCat,
+        subcategoriaId: newProjectSubCat,
+        creadoPor: auth.currentUser?.uid,
+        fechaCreacion: serverTimestamp(),
+        estado: 'activo'
       });
       setNewProjectName('');
       setNewProjectDesc('');
-      setNewProjectCatId('');
-      setNewProjectSubcatId('');
-      setShowCreateProject(false);
+      setNewProjectCat('');
+      setNewProjectSubCat('');
       cargarProyectos();
-      registrarAuditoria('Creó proyecto', newProjectName.trim());
+      showToast('success', '✅ Proyecto creado exitosamente.');
     } catch {
-      alert('❌ Error al crear el proyecto.');
+      showToast('error', '❌ Error al crear el proyecto.');
     }
   };
 
   const eliminarProyecto = async (proyecto: Proyecto) => {
-    const primera = confirm(`¿Estás seguro de que deseas eliminar el proyecto "${proyecto.nombre}"?`);
-    if (!primera) return;
-    const segunda = confirm('⚠️ Se eliminarán también todas las áreas y asignaciones de este proyecto.\n¿Confirmas la eliminación?');
-    if (!segunda) return;
-    try {
-      // Eliminar áreas del proyecto primero
-      const areasSnap = await getDocs(collection(db, 'proyectos', proyecto.id, 'areas'));
-      for (const aDoc of areasSnap.docs) {
-        await deleteDoc(doc(db, 'proyectos', proyecto.id, 'areas', aDoc.id));
-      }
-      await deleteDoc(doc(db, 'proyectos', proyecto.id));
-      cargarProyectos();
-      registrarAuditoria('Eliminó proyecto', proyecto.nombre);
-      alert('🗑️ Proyecto eliminado correctamente.');
-    } catch {
-      alert('❌ Error al eliminar el proyecto.');
-    }
+    showConfirm(
+      'Eliminar Proyecto',
+      `¿Estás seguro de que deseas eliminar el proyecto "${proyecto.nombre}"?`,
+      () => {
+        showConfirm(
+          'Confirmación Definitiva',
+          '⚠️ Se eliminarán también todas las áreas y asignaciones de este proyecto.\n¿Confirmas la eliminación?',
+          async () => {
+            try {
+              // Eliminar áreas del proyecto primero
+              const areasSnap = await getDocs(collection(db, 'proyectos', proyecto.id, 'areas'));
+              for (const aDoc of areasSnap.docs) {
+                await deleteDoc(doc(db, 'proyectos', proyecto.id, 'areas', aDoc.id));
+              }
+              await deleteDoc(doc(db, 'proyectos', proyecto.id));
+              cargarProyectos();
+              registrarAuditoria('Eliminó proyecto', proyecto.nombre);
+              showToast('success', '🗑️ Proyecto eliminado correctamente.');
+            } catch {
+              showToast('error', '❌ Error al eliminar el proyecto.');
+            }
+          },
+          true,
+          'Eliminar Permanentemente',
+          'Cancelar'
+        );
+      },
+      true,
+      'Continuar',
+      'Cancelar'
+    );
   };
 
   const toggleEstadoProyecto = async (proyecto: Proyecto) => {
     const nuevoEstado = proyecto.estado === 'activo' ? 'finalizado' : 'activo';
-    const confirmed = confirm(`¿Cambiar el estado del proyecto "${proyecto.nombre}" a ${nuevoEstado.toUpperCase()}?`);
-    if (!confirmed) return;
-    try {
-      await updateDoc(doc(db, 'proyectos', proyecto.id), { estado: nuevoEstado });
-      // Actualizar el proyecto seleccionado si estamos en detalle
-      if (selectedProject?.id === proyecto.id) {
-        setSelectedProject({ ...proyecto, estado: nuevoEstado as 'activo' | 'finalizado' });
-      }
-      cargarProyectos();
-      registrarAuditoria(`Cambió estado de proyecto a ${nuevoEstado}`, proyecto.nombre);
-    } catch {
-      alert('❌ Error al cambiar el estado del proyecto.');
-    }
+    showConfirm(
+      'Cambiar Estado del Proyecto',
+      `¿Cambiar el estado del proyecto "${proyecto.nombre}" a ${nuevoEstado.toUpperCase()}?`,
+      async () => {
+        try {
+          await updateDoc(doc(db, 'proyectos', proyecto.id), { estado: nuevoEstado });
+          // Actualizar el proyecto seleccionado si estamos en detalle
+          if (selectedProject?.id === proyecto.id) {
+            setSelectedProject({ ...proyecto, estado: nuevoEstado as 'activo' | 'finalizado' });
+          }
+          cargarProyectos();
+          registrarAuditoria(`Cambió estado de proyecto a ${nuevoEstado}`, proyecto.nombre);
+          showToast('success', `✅ Estado cambiado a ${nuevoEstado}.`);
+        } catch {
+          showToast('error', '❌ Error al cambiar el estado del proyecto.');
+        }
+      },
+      false,
+      'Confirmar',
+      'Cancelar'
+    );
   };
 
   // ===== ÁREAS =====
@@ -779,27 +851,34 @@ function App() {
     if (!newAreaName.trim()) return;
     try {
       await addDoc(collection(db, 'proyectos', proyectoId, 'areas'), {
-        nombre: newAreaName.trim(),
+        nombre: newAreaName,
         colaboradores: []
       });
       setNewAreaName('');
       cargarAreas(proyectoId);
-      registrarAuditoria('Creó área', newAreaName.trim());
+      showToast('success', '✅ Área creada exitosamente.');
     } catch {
-      alert('❌ Error al crear el área.');
+      showToast('error', '❌ Error al crear el área.');
     }
   };
 
   const eliminarArea = async (proyectoId: string, areaId: string, areaName: string) => {
-    const confirmed = confirm(`¿Eliminar el área "${areaName}"?`);
-    if (!confirmed) return;
-    try {
-      await deleteDoc(doc(db, 'proyectos', proyectoId, 'areas', areaId));
-      cargarAreas(proyectoId);
-      registrarAuditoria('Eliminó área', areaName);
-    } catch {
-      alert('❌ Error al eliminar el área.');
-    }
+    showConfirm(
+      'Eliminar Área',
+      `¿Eliminar el área "${areaName}"?`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'proyectos', proyectoId, 'areas', areaId));
+          cargarAreas(proyectoId);
+          showToast('success', '🗑️ Área eliminada correctamente.');
+        } catch {
+          showToast('error', '❌ Error al eliminar el área.');
+        }
+      },
+      true,
+      'Eliminar',
+      'Cancelar'
+    );
   };
 
   // ===== ASIGNAR COLABORADORES =====
@@ -810,18 +889,19 @@ function App() {
     setShowAssignModal(true);
   };
 
-  const guardarAsignacion = async () => {
+  const handleAssignCollaborators = async () => {
     if (!selectedProject || !assignAreaId) return;
     try {
-      await updateDoc(
-        doc(db, 'proyectos', selectedProject.id, 'areas', assignAreaId),
-        { colaboradores: selectedCollaborators }
-      );
+      await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', assignAreaId), {
+        colaboradores: selectedCollaborators
+      });
       setShowAssignModal(false);
+      setAssignAreaId(null);
+      setSelectedCollaborators([]);
       cargarAreas(selectedProject.id);
-      registrarAuditoria('Asignó colaboradores al área', assignAreaId);
+      showToast('success', '✅ Colaboradores asignados correctamente.');
     } catch {
-      alert('❌ Error al asignar colaboradores.');
+      showToast('error', '❌ Error al asignar colaboradores.');
     }
   };
 
@@ -1148,19 +1228,6 @@ function App() {
                 Documentos
               </div>
               <div className="card-grid">
-                {userRole === 'admin' && (
-                  <button className="action-card" onClick={() => {
-                    setUploadProyectoId(null);
-                    fileInputRef.current?.click();
-                  }}>
-                    <div className="card-icon blue">
-                      <UploadCloud size={26} color="#4f8cff" />
-                    </div>
-                    <h3>Subir Documento Huérfano</h3>
-                    <p>Subir archivos sin proyecto (solo admin)</p>
-                  </button>
-                )}
-
                 <button className="action-card" onClick={abrirExplorador}>
                   <div className="card-icon green">
                     <FolderOpen size={26} color="#34d399" />
@@ -1234,15 +1301,49 @@ function App() {
               </button>
               <h2>Archivos Subidos</h2>
               <span className="badge">{listaArchivos.length}</span>
+              
+              <div style={{ marginLeft: 'auto' }}>
+                <button
+                  onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                  title="Filtros Avanzados"
+                  className="btn-secondary"
+                  style={{ background: 'transparent', border: '1px solid var(--border-subtle)', padding: '6px 12px', color: showAdvancedFilters ? '#4f8cff' : 'var(--text-muted)' }}
+                >
+                  <Filter size={16} style={{ marginRight: 6 }} /> Filtros
+                </button>
+              </div>
             </div>
 
-            {listaArchivos.length === 0 ? (
+            {showAdvancedFilters && (
+              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <span>Extensión:</span>
+                  <select value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                    <option value="all">Todas</option>
+                    <option value="pdf">.pdf</option>
+                    <option value="docx">.docx</option>
+                    <option value="xlsx">.xlsx</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <span>Tamaño:</span>
+                  <select value={filterSize} onChange={(e) => setFilterSize(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                    <option value="all">Todos</option>
+                    <option value="small">Pequeño (&lt; 1MB)</option>
+                    <option value="medium">Mediano (1MB - 5MB)</option>
+                    <option value="large">Grande (&gt; 5MB)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {filteredExploradorResults.length === 0 ? (
               <div className="empty-state">
                 <Inbox size={48} />
-                <p>No hay documentos en la bodega aún.</p>
+                <p>No se encontraron documentos.</p>
               </div>
             ) : (
-              renderFileList(listaArchivos)
+              renderFileList(filteredExploradorResults)
             )}
           </div>
         )}
@@ -1989,6 +2090,50 @@ function App() {
         </div>
         <RefreshCcw size={14} color="var(--text-muted)" className={loading ? 'spin-icon' : ''} style={{ marginLeft: 8 }} />
       </div>
+      {/* ===== GLOBAL UI ===== */}
+      <div className="toast-container">
+        {toasts.map(t => (
+          <div key={t.id} className={`toast ${t.type}`}>
+            <div className="toast-icon">
+              {t.type === 'success' && <CheckCircle size={18} color="var(--accent-green)" />}
+              {t.type === 'error' && <XCircle size={18} color="var(--accent-red)" />}
+              {t.type === 'warning' && <AlertTriangle size={18} color="var(--accent-amber)" />}
+              {t.type === 'info' && <Info size={18} color="var(--accent-blue)" />}
+            </div>
+            <div className="toast-content">{t.message}</div>
+          </div>
+        ))}
+      </div>
+
+      {confirmState.isOpen && (
+        <div className="confirm-overlay" style={{ zIndex: 99999 }}>
+          <div className="confirm-box">
+            <h3>
+              {confirmState.isDestructive ? <AlertTriangle size={22} color="var(--accent-red)" /> : <Info size={22} color="var(--accent-blue)" />}
+              {confirmState.title}
+            </h3>
+            <p>{confirmState.message}</p>
+            <div className="confirm-actions">
+              <button 
+                className="btn-secondary" 
+                onClick={() => setConfirmState({ ...confirmState, isOpen: false })}
+              >
+                {confirmState.cancelText}
+              </button>
+              <button 
+                className="btn-primary"
+                style={confirmState.isDestructive ? { background: 'var(--accent-red)', color: 'white', borderColor: 'var(--accent-red)' } : {}}
+                onClick={() => {
+                  setConfirmState({ ...confirmState, isOpen: false });
+                  confirmState.onConfirm();
+                }}
+              >
+                {confirmState.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
