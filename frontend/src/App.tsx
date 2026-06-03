@@ -6,7 +6,7 @@ import {
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
   Filter, Users, History, Shield, Eye, Phone, Loader2,
   Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
-  UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle
+  UserPlus, UserX, Tag, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase';
