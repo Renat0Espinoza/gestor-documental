@@ -20,6 +20,7 @@ interface FileInfo {
   modified: string | null;
   proyectoId?: string;
   fsId?: string;
+  estado?: 'activo' | 'papelera';
 }
 
 interface DocumentoFirestore {
@@ -30,6 +31,7 @@ interface DocumentoFirestore {
   proyectoId: string;
   subidoPor: string;
   fechaCreacion: any;
+  estado?: 'activo' | 'papelera';
 }
 
 interface Categoria {
@@ -94,7 +96,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 // ===== TIPOS DE VISTA =====
-type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'proyectos' | 'proyecto-detalle' | 'categorias';
+type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'proyectos' | 'proyecto-detalle' | 'categorias' | 'papelera';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -111,6 +113,8 @@ function App() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterExtension, setFilterExtension] = useState('all');
   const [filterSize, setFilterSize] = useState('all');
+  const [filterCategoriaId, setFilterCategoriaId] = useState('all');
+  const [filterSubcategoriaId, setFilterSubcategoriaId] = useState('all');
   const [usersList, setUsersList] = useState<any[]>([]);
   const [historyLogs, setHistoryLogs] = useState<any[]>([
     { id: 1, usuario: 'Sistema', accion: 'Auditoría inicializada', documento: 'N/A', fecha: new Date().toISOString() }
@@ -342,9 +346,9 @@ function App() {
       const mergedFiles = filesFromApi.map(f => {
         const fDoc = docs.find(d => d.filename === f.name);
         if (fDoc) {
-          return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id };
+          return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id, estado: fDoc.estado || 'activo' };
         }
-        return f;
+        return { ...f, estado: 'activo' };
       });
 
       // Filtro para Colaboradores: Solo ver archivos de proyectos asignados
@@ -394,8 +398,8 @@ function App() {
         
         const mergedFiles = filesFromApi.map(f => {
           const fDoc = documentosFS.find(d => d.filename === f.name);
-          if (fDoc) return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id };
-          return f;
+          if (fDoc) return { ...f, proyectoId: fDoc.proyectoId, fsId: fDoc.id, estado: fDoc.estado || 'activo' };
+          return { ...f, estado: 'activo' };
         });
 
         let filteredFiles = mergedFiles;
@@ -416,6 +420,8 @@ function App() {
   // ===== FILTROS AVANZADOS =====
   const aplicarFiltrosAvanzados = (archivos: FileInfo[]) => {
     return archivos.filter(f => {
+      if (f.estado === 'papelera') return false;
+
       let matchExt = true;
       if (filterExtension !== 'all') matchExt = f.name.toLowerCase().endsWith(`.${filterExtension}`);
 
@@ -425,12 +431,34 @@ function App() {
         else if (filterSize === 'medium') matchSize = f.size >= 1024 * 1024 && f.size <= 5 * 1024 * 1024;
         else if (filterSize === 'large') matchSize = f.size > 5 * 1024 * 1024;
       }
-      return matchExt && matchSize;
+
+      let matchCat = true;
+      if (filterCategoriaId !== 'all' && f.proyectoId) {
+        const proj = proyectos.find(p => p.id === f.proyectoId);
+        matchCat = proj ? proj.categoriaId === filterCategoriaId : false;
+      } else if (filterCategoriaId !== 'all' && !f.proyectoId) {
+        matchCat = false;
+      }
+
+      let matchSub = true;
+      if (filterSubcategoriaId !== 'all' && f.proyectoId) {
+        const proj = proyectos.find(p => p.id === f.proyectoId);
+        matchSub = proj ? proj.subcategoriaId === filterSubcategoriaId : false;
+      } else if (filterSubcategoriaId !== 'all' && !f.proyectoId) {
+        matchSub = false;
+      }
+
+      return matchExt && matchSize && matchCat && matchSub;
     });
   };
 
   const filteredSearchResults = aplicarFiltrosAvanzados(searchResults);
   const filteredExploradorResults = aplicarFiltrosAvanzados(listaArchivos);
+
+  // Subcategorías filtradas por categoría seleccionada en filtro
+  const subcategoriasParaFiltro = filterCategoriaId !== 'all'
+    ? subcategorias.filter(s => s.categoriaId === filterCategoriaId)
+    : subcategorias;
 
   const handleDownload = (filename: string) => {
     registrarAuditoria('Descargó el archivo', filename);
@@ -532,49 +560,70 @@ function App() {
     }
   };
 
-  // ===== ELIMINAR ARCHIVO =====
+  // ===== ELIMINAR ARCHIVO (Soft Delete) =====
   const handleDelete = async (archivo: FileInfo) => {
     if (userRole === 'lector') return;
 
+    if (!archivo.fsId) {
+      handleHardDelete(archivo);
+      return;
+    }
+
     showConfirm(
-      'Eliminar Archivo',
-      `¿Estás seguro de que deseas eliminar el archivo?\n\n"${archivo.name}"`,
-      () => {
-        showConfirm(
-          'Confirmación Irreversible',
-          '⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?',
-          async () => {
-            try {
-              // Eliminar del almacenamiento local
-              await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(archivo.name)}`);
-              
-              // Eliminar de Firestore si tiene registro
-              if (archivo.fsId) {
-                await deleteDoc(doc(db, 'documentos', archivo.fsId));
-              }
-              
-              showToast('success', '🗑️ Archivo eliminado correctamente.');
-              registrarAuditoria('Eliminó el archivo', archivo.name);
-              
-              if (vistaActual === 'explorador') {
-                abrirExplorador();
-              } else if (vistaActual === 'proyecto-detalle') {
-                abrirExploradorContexto();
-              } else {
-                const response = await axios.get(`${API_BASE}/api/files`);
-                setListaArchivos(response.data); // fallback
-              }
-            } catch {
-              showToast('error', '❌ Error al intentar eliminar el archivo.');
-            }
-          },
-          true,
-          'Eliminar Permanentemente',
-          'Cancelar'
-        );
+      'Mover a Papelera',
+      `¿Estás seguro de que deseas enviar el archivo a la papelera?\n\n"${archivo.name}"`,
+      async () => {
+        try {
+          await updateDoc(doc(db, 'documentos', archivo.fsId!), { estado: 'papelera' });
+          showToast('success', '🗑️ Archivo movido a la papelera.');
+          registrarAuditoria('Movió archivo a papelera', archivo.name);
+          if (vistaActual === 'explorador') abrirExplorador();
+          else if (vistaActual === 'proyecto-detalle') abrirExploradorContexto();
+          else {
+            const response = await axios.get(`${API_BASE}/api/files`);
+            setListaArchivos(response.data);
+          }
+        } catch {
+          showToast('error', '❌ Error al mover a la papelera.');
+        }
       },
       true,
-      'Continuar',
+      'Mover a papelera',
+      'Cancelar'
+    );
+  };
+
+  const handleRestore = async (archivo: FileInfo) => {
+    if (!archivo.fsId) return;
+    try {
+      await updateDoc(doc(db, 'documentos', archivo.fsId), { estado: 'activo' });
+      showToast('success', '♻️ Archivo restaurado.');
+      registrarAuditoria('Restauró archivo', archivo.name);
+      abrirExploradorContexto();
+    } catch {
+      showToast('error', '❌ Error al restaurar.');
+    }
+  };
+
+  const handleHardDelete = async (archivo: FileInfo) => {
+    showConfirm(
+      'Eliminar Permanentemente',
+      `⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar el archivo permanentemente?\n\n"${archivo.name}"`,
+      async () => {
+        try {
+          await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(archivo.name)}`);
+          if (archivo.fsId) {
+            await deleteDoc(doc(db, 'documentos', archivo.fsId));
+          }
+          showToast('success', '🗑️ Archivo eliminado permanentemente.');
+          registrarAuditoria('Eliminó archivo permanentemente', archivo.name);
+          abrirExploradorContexto();
+        } catch {
+          showToast('error', '❌ Error al intentar eliminar el archivo.');
+        }
+      },
+      true,
+      'Eliminar Permanentemente',
       'Cancelar'
     );
   };
@@ -1016,14 +1065,29 @@ function App() {
             </div>
           </div>
           <div className="file-actions">
-            <button className="file-download" onClick={() => handleDownload(archivo.name)}>
-              <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-              Descargar
-            </button>
-            {userRole !== 'lector' && (
-              <button className="file-delete" onClick={() => handleDelete(archivo)} title="Eliminar archivo">
-                <Trash2 size={14} />
-              </button>
+            {vistaActual === 'papelera' ? (
+              <>
+                <button className="file-download" onClick={() => handleRestore(archivo)} style={{ color: '#34d399', border: '1px solid #34d399', background: 'rgba(52, 211, 153, 0.1)' }}>
+                  <RefreshCcw size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Restaurar
+                </button>
+                {userRole !== 'lector' && (
+                  <button className="file-delete" onClick={() => handleHardDelete(archivo)} title="Eliminar definitivamente">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <button className="file-download" onClick={() => handleDownload(archivo.name)}>
+                  <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                  Descargar
+                </button>
+                {userRole !== 'lector' && (
+                  <button className="file-delete" onClick={() => handleDelete(archivo)} title="Mover a papelera">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1287,6 +1351,14 @@ function App() {
                     <h3>Auditoría</h3>
                     <p>Historial de cambios del sistema</p>
                   </button>
+
+                  <button className="action-card" onClick={() => { setVistaActual('papelera'); abrirExploradorContexto(); }}>
+                    <div className="card-icon" style={{ background: 'rgba(248, 113, 113, 0.1)' }}>
+                      <Trash2 size={26} color="#f87171" />
+                    </div>
+                    <h3>Papelera de Reciclaje</h3>
+                    <p>Ver y restaurar documentos eliminados</p>
+                  </button>
                 </div>
               </div>
             )}
@@ -1333,23 +1405,37 @@ function App() {
             </div>
 
             {showAdvancedFilters && (
-              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <span>Extensión:</span>
-                  <select value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+              <div className="advanced-filters-panel">
+                <div className="filter-group">
+                  <span className="filter-label">Extensión</span>
+                  <select className="filter-select" value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)}>
                     <option value="all">Todas</option>
                     <option value="pdf">.pdf</option>
                     <option value="docx">.docx</option>
                     <option value="xlsx">.xlsx</option>
                   </select>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <span>Tamaño:</span>
-                  <select value={filterSize} onChange={(e) => setFilterSize(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                <div className="filter-group">
+                  <span className="filter-label">Tamaño</span>
+                  <select className="filter-select" value={filterSize} onChange={(e) => setFilterSize(e.target.value)}>
                     <option value="all">Todos</option>
                     <option value="small">Pequeño (&lt; 1MB)</option>
                     <option value="medium">Mediano (1MB - 5MB)</option>
                     <option value="large">Grande (&gt; 5MB)</option>
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <span className="filter-label">Categoría</span>
+                  <select className="filter-select" value={filterCategoriaId} onChange={(e) => { setFilterCategoriaId(e.target.value); setFilterSubcategoriaId('all'); }}>
+                    <option value="all">Todas</option>
+                    {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <span className="filter-label">Subcategoría</span>
+                  <select className="filter-select" value={filterSubcategoriaId} onChange={(e) => setFilterSubcategoriaId(e.target.value)}>
+                    <option value="all">Todas</option>
+                    {subcategoriasParaFiltro.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
                   </select>
                 </div>
               </div>
@@ -1362,6 +1448,28 @@ function App() {
               </div>
             ) : (
               renderFileList(filteredExploradorResults)
+            )}
+          </div>
+        )}
+
+        {/* === PAPELERA === */}
+        {vistaActual === 'papelera' && userRole === 'admin' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2 style={{ color: 'var(--accent-red)' }}>Papelera de Reciclaje</h2>
+              <span className="badge">{listaArchivos.filter(f => f.estado === 'papelera').length}</span>
+            </div>
+
+            {listaArchivos.filter(f => f.estado === 'papelera').length === 0 ? (
+              <div className="empty-state">
+                <Trash2 size={48} />
+                <p>La papelera está vacía.</p>
+              </div>
+            ) : (
+              renderFileList(listaArchivos.filter(f => f.estado === 'papelera'))
             )}
           </div>
         )}
@@ -1396,23 +1504,37 @@ function App() {
             </div>
 
             {showAdvancedFilters && (
-              <div style={{ display: 'flex', gap: '15px', padding: '10px 16px', background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <span>Extensión:</span>
-                  <select value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+              <div className="advanced-filters-panel">
+                <div className="filter-group">
+                  <span className="filter-label">Extensi&#243;n</span>
+                  <select className="filter-select" value={filterExtension} onChange={(e) => setFilterExtension(e.target.value)}>
                     <option value="all">Todas</option>
                     <option value="pdf">.pdf</option>
                     <option value="docx">.docx</option>
                     <option value="xlsx">.xlsx</option>
                   </select>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <span>Tamaño:</span>
-                  <select value={filterSize} onChange={(e) => setFilterSize(e.target.value)} style={{ background: 'var(--bg-primary)', color: 'white', border: '1px solid var(--border-card)', borderRadius: '4px', padding: '4px 8px', outline: 'none' }}>
+                <div className="filter-group">
+                  <span className="filter-label">Tama&#241;o</span>
+                  <select className="filter-select" value={filterSize} onChange={(e) => setFilterSize(e.target.value)}>
                     <option value="all">Todos</option>
-                    <option value="small">Pequeño (&lt; 1MB)</option>
+                    <option value="small">Peque&#241;o (&lt; 1MB)</option>
                     <option value="medium">Mediano (1MB - 5MB)</option>
                     <option value="large">Grande (&gt; 5MB)</option>
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <span className="filter-label">Categor&#237;a</span>
+                  <select className="filter-select" value={filterCategoriaId} onChange={(e) => { setFilterCategoriaId(e.target.value); setFilterSubcategoriaId('all'); }}>
+                    <option value="all">Todas</option>
+                    {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <span className="filter-label">Subcategor&#237;a</span>
+                  <select className="filter-select" value={filterSubcategoriaId} onChange={(e) => setFilterSubcategoriaId(e.target.value)}>
+                    <option value="all">Todas</option>
+                    {subcategoriasParaFiltro.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
                   </select>
                 </div>
               </div>
@@ -2133,14 +2255,13 @@ function App() {
             <p>{confirmState.message}</p>
             <div className="confirm-actions">
               <button 
-                className="btn-secondary" 
+                className="confirm-btn-cancel" 
                 onClick={() => setConfirmState({ ...confirmState, isOpen: false })}
               >
                 {confirmState.cancelText}
               </button>
               <button 
-                className="btn-primary"
-                style={confirmState.isDestructive ? { background: 'var(--accent-red)', color: 'white', borderColor: 'var(--accent-red)' } : {}}
+                className={`confirm-btn-action ${confirmState.isDestructive ? 'destructive' : ''}`}
                 onClick={() => {
                   setConfirmState({ ...confirmState, isOpen: false });
                   confirmState.onConfirm();
