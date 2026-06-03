@@ -257,6 +257,19 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // Cargar metadatos globales (categorías y proyectos) en cuanto haya sesión
+  useEffect(() => {
+    if (isAuthenticated) {
+      cargarCategorias();
+      cargarProyectos();
+      getDocs(collection(db, 'categorias')).then(snap => {
+        const cats: Categoria[] = [];
+        snap.forEach(d => cats.push({ id: d.id, ...d.data() } as Categoria));
+        cargarTodasSubcategorias(cats);
+      }).catch(err => console.error("Error al cargar datos globales", err));
+    }
+  }, [isAuthenticated]);
+
   // ===== AUDITORÍA =====
   const registrarAuditoria = (accion: string, documento: string) => {
     const newLog = {
@@ -565,7 +578,37 @@ function App() {
     if (userRole === 'lector') return;
 
     if (!archivo.fsId) {
-      handleHardDelete(archivo);
+      // Si el archivo es huérfano, le creamos un registro en papelera
+      showConfirm(
+        'Mover a Papelera',
+        `¿Estás seguro de que deseas enviar el archivo a la papelera?\n\n"${archivo.name}"`,
+        async () => {
+          try {
+            await addDoc(collection(db, 'documentos'), {
+              filename: archivo.name,
+              originalName: archivo.name,
+              size: archivo.size,
+              proyectoId: '',
+              subidoPor: auth.currentUser?.uid || '',
+              fechaCreacion: serverTimestamp(),
+              estado: 'papelera'
+            });
+            showToast('success', '🗑️ Archivo movido a la papelera.');
+            registrarAuditoria('Movió archivo a papelera', archivo.name);
+            if (vistaActual === 'explorador') abrirExplorador();
+            else if (vistaActual === 'proyecto-detalle') abrirExploradorContexto();
+            else {
+              const response = await axios.get(`${API_BASE}/api/files`);
+              setListaArchivos(response.data);
+            }
+          } catch {
+            showToast('error', '❌ Error al mover a la papelera.');
+          }
+        },
+        true,
+        'Mover a papelera',
+        'Cancelar'
+      );
       return;
     }
 
