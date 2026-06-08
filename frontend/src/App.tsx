@@ -1622,14 +1622,14 @@ function App() {
                 <tbody>
                   {usersList.map(u => (
                     <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td data-label="Nombre / Correo" style={{ padding: '12px 16px' }}>
                         <div>{u.nombre || 'Sin nombre'}</div>
                         <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{u.correo || u.email}</div>
                       </td>
-                      <td style={{ padding: '12px 16px', color: 'var(--text-primary)' }}>
+                      <td data-label="Teléfono" style={{ padding: '12px 16px', color: 'var(--text-primary)' }}>
                         {u.telefono || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Sin registrar</span>}
                       </td>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td data-label="Rol Actual" style={{ padding: '12px 16px' }}>
                         <span style={{
                           padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 600,
                           backgroundColor: u.rol === 'admin' ? 'rgba(79, 140, 255, 0.15)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255, 255, 255, 0.05)',
@@ -1637,7 +1637,7 @@ function App() {
                           border: `1px solid ${u.rol === 'admin' ? 'rgba(79, 140, 255, 0.3)' : u.rol === 'colaborador' ? 'rgba(52, 211, 153, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`
                         }}>{u.rol}</span>
                       </td>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td data-label="Cambiar a" style={{ padding: '12px 16px' }}>
                         {u.rol === 'admin' ? (
                           <select
                             value="admin"
@@ -1657,7 +1657,7 @@ function App() {
                           </select>
                         )}
                       </td>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td data-label="Estado" style={{ padding: '12px 16px' }}>
                         {u.rol === 'admin' ? (
                           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>—</span>
                         ) : (
@@ -1701,14 +1701,14 @@ function App() {
                 <tbody>
                   {historyLogs.map(log => (
                     <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
-                      <td style={{ padding: '12px 16px' }}>{log.usuario}</td>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td data-label="Fecha" style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{formatDate(log.fecha)}</td>
+                      <td data-label="Usuario" style={{ padding: '12px 16px' }}>{log.usuario}</td>
+                      <td data-label="Acción" style={{ padding: '12px 16px' }}>
                         <span style={{ color: log.accion.includes('Eliminó') ? '#f87171' : log.accion.includes('Subió') ? '#34d399' : 'var(--text-secondary)' }}>
                           {log.accion}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 16px', color: '#4f8cff' }}>{log.documento}</td>
+                      <td data-label="Documento" style={{ padding: '12px 16px', color: '#4f8cff' }}>{log.documento}</td>
                     </tr>
                   ))}
                 </tbody>
