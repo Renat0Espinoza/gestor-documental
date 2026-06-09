@@ -830,6 +830,7 @@ html, body, #root {
   line-height: 1.5;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1644,21 +1645,555 @@ html, body, #root {
 }
 
 /* ===== RESPONSIVE ===== */
+
+/* ---------- Tablet & Small Laptops (≤ 768px) ---------- */
 @media (max-width: 768px) {
-  .app-header { padding: 14px 20px; }
-  .app-main { padding: 20px; }
-  .card-grid { grid-template-columns: 1fr 1fr; }
-  .panel { padding: 24px 18px; }
-  .login-card { margin: 16px; padding: 36px 28px; }
-  .profile-modal { margin: 16px; padding: 36px 28px; }
-  .project-grid { grid-template-columns: 1fr; }
-  .project-detail-header { flex-direction: column; gap: 16px; }
-  .project-detail-actions { margin-left: 0; }
-  .project-card-actions { flex-wrap: wrap; }
-  .advanced-filters-panel { flex-direction: column; gap: 12px; }
-  .filter-group { min-width: unset; }
-  .confirm-box { margin: 16px; }
+  /* --- Layout --- */
+  .app-header {
+    padding: 12px 16px;
+  }
+  .app-header h1 {
+    font-size: 17px;
+  }
+  .app-header .header-sub {
+    font-size: 10px;
+  }
+  .app-main {
+    padding: 16px;
+  }
+
+  /* --- Dashboard --- */
+  .welcome-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 18px;
+    font-size: 15px;
+  }
+  .welcome-banner > div:last-child {
+    align-self: flex-start;
+  }
+  .card-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .action-card {
+    padding: 22px 16px;
+  }
+  .action-card h3 {
+    font-size: 14px;
+  }
+  .action-card p {
+    font-size: 12px;
+  }
+  .card-icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 14px;
+  }
+
+  /* --- Panels --- */
+  .panel {
+    padding: 20px 16px;
+  }
+  .panel-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .panel-header h2 {
+    font-size: 16px;
+  }
+
+  /* --- Login / Profile --- */
+  .login-card {
+    margin: 16px;
+    padding: 32px 24px;
+  }
+  .login-card h2 {
+    font-size: 22px;
+  }
+  .profile-modal {
+    margin: 16px;
+    padding: 32px 24px;
+  }
+  .profile-modal h2 {
+    font-size: 20px;
+  }
+  .deactivated-card {
+    margin: 16px;
+    padding: 36px 28px;
+  }
+
+  /* --- Projects --- */
+  .project-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .project-detail-header {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .project-detail-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .project-detail-info h2 {
+    font-size: 18px;
+  }
+  .project-card {
+    padding: 18px;
+  }
+  .project-card-actions {
+    flex-wrap: wrap;
+  }
+
+  /* --- File items --- */
+  .file-item {
+    flex-wrap: wrap;
+    padding: 12px;
+    gap: 10px;
+  }
+  .file-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .file-info {
+    min-width: 0;
+    flex: 1 1 calc(100% - 50px);
+  }
+  .file-name {
+    font-size: 13px;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .file-actions {
+    width: 100%;
+    justify-content: flex-end;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 2px;
+  }
+
+  /* --- Tables → Card layout on mobile --- */
+  .panel table,
+  .panel thead,
+  .panel tbody,
+  .panel tr,
+  .panel th,
+  .panel td {
+    display: block;
+    width: 100%;
+  }
+  .panel thead {
+    display: none;
+  }
+  .panel tr {
+    padding: 14px;
+    margin-bottom: 8px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    position: relative;
+  }
+  .panel td {
+    padding: 4px 0 !important;
+    text-align: left;
+    font-size: 13px;
+    border: none !important;
+  }
+  .panel td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  /* --- Search --- */
+  .search-bar {
+    padding: 10px 14px;
+  }
+  .search-bar input {
+    font-size: 14px;
+  }
+
+  /* --- Forms --- */
+  .form-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .create-form-card {
+    padding: 18px;
+  }
+  .settings-form {
+    max-width: 100%;
+  }
+  .inline-form {
+    flex-wrap: wrap;
+  }
+  .inline-form input {
+    min-width: 0;
+    flex: 1 1 60%;
+  }
+
+  /* --- Filters --- */
+  .advanced-filters-panel {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+  .filter-group {
+    min-width: unset;
+  }
+
+  /* --- Area cards --- */
+  .area-card {
+    padding: 16px;
+  }
+  .area-card-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .area-card-title {
+    font-size: 14px;
+  }
+  .collaborator-chips {
+    gap: 6px;
+  }
+  .collaborator-chip {
+    font-size: 11px;
+    padding: 4px 10px;
+  }
+
+  /* --- Category cards --- */
+  .category-header {
+    padding: 14px 16px;
+  }
+  .category-header-left h4 {
+    font-size: 14px;
+  }
+  .category-body {
+    padding: 14px 16px;
+  }
+
+  /* --- Modals --- */
+  .modal-content {
+    margin: 16px;
+    padding: 24px 18px;
+    max-width: calc(100vw - 32px);
+    max-height: 85vh;
+  }
+  .modal-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  .modal-actions button {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+  }
+  .confirm-box {
+    margin: 16px;
+    max-width: calc(100vw - 32px);
+  }
+  .confirm-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  .confirm-actions button {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+  }
+
+  /* --- Toasts --- */
+  .toast-container {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+  }
+  .toast {
+    min-width: unset;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  /* --- GitHub widget --- */
+  .github-widget {
+    bottom: 14px;
+    right: 14px;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+  .github-label {
+    font-size: 9px;
+  }
+  .github-status {
+    font-size: 11px;
+  }
 }
+
+/* ---------- Small Phones (≤ 480px) ---------- */
 @media (max-width: 480px) {
-  .card-grid { grid-template-columns: 1fr; }
+  .app-header h1 {
+    font-size: 15px;
+  }
+  .app-main {
+    padding: 12px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .action-card {
+    flex-direction: row;
+    padding: 16px;
+    text-align: left;
+    gap: 14px;
+  }
+  .action-card .card-icon {
+    margin-bottom: 0;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+  }
+  .action-card h3 {
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+  .action-card p {
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .panel {
+    padding: 16px 12px;
+    border-radius: var(--radius-md);
+  }
+  .panel-header {
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .panel-header h2 {
+    font-size: 15px;
+  }
+  .btn-back {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .login-card {
+    margin: 12px;
+    padding: 28px 20px;
+  }
+  .login-card h2 {
+    font-size: 20px;
+  }
+  .profile-modal {
+    margin: 12px;
+    padding: 28px 20px;
+  }
+  .deactivated-card {
+    margin: 12px;
+    padding: 28px 20px;
+  }
+
+  .welcome-banner {
+    padding: 12px 14px;
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+  .welcome-wave {
+    font-size: 20px;
+  }
+
+  .dashboard-section {
+    margin-bottom: 20px;
+  }
+  .section-label {
+    font-size: 11px;
+    margin-bottom: 12px;
+  }
+
+  /* File items compact */
+  .file-item {
+    padding: 10px;
+  }
+  .file-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .file-name {
+    font-size: 12px;
+  }
+  .file-meta {
+    font-size: 11px;
+  }
+  .file-download {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  /* Project detail */
+  .project-detail-info h2 {
+    font-size: 17px;
+  }
+  .project-detail-tags {
+    gap: 6px;
+  }
+  .project-meta-tag {
+    font-size: 10px;
+    padding: 3px 8px;
+  }
+  .status-badge {
+    font-size: 10px;
+    padding: 3px 10px;
+  }
+
+  /* Section dividers */
+  .section-divider {
+    margin: 20px 0 12px 0;
+  }
+  .section-divider h3 {
+    font-size: 13px;
+  }
+
+  /* Confirm / Modal */
+  .confirm-box {
+    padding: 20px;
+  }
+  .confirm-box h3 {
+    font-size: 16px;
+  }
+  .confirm-box p {
+    font-size: 13px;
+  }
+
+  /* GitHub widget compact */
+  .github-widget {
+    bottom: 10px;
+    right: 10px;
+    padding: 8px 12px;
+    gap: 6px;
+  }
+  .github-widget > div {
+    display: none;
+  }
+
+  /* Search bar */
+  .search-bar {
+    padding: 10px 12px;
+    margin-bottom: 16px;
+  }
+
+  /* Inline forms */
+  .btn-create {
+    font-size: 13px;
+    padding: 8px 14px;
+  }
+
+  /* Settings */
+  .input-wrapper {
+    padding: 10px 12px;
+  }
+  .input-wrapper input {
+    font-size: 14px;
+  }
+  .btn-save {
+    width: 100%;
+    justify-content: center;
+  }
+  .btn-primary {
+    padding: 12px;
+    font-size: 14px;
+  }
+}
+
+/* ---------- Very Small Screens (≤ 360px) ---------- */
+@media (max-width: 360px) {
+  .app-header {
+    padding: 10px 12px;
+  }
+  .app-header h1 {
+    font-size: 14px;
+  }
+  .btn-logout {
+    padding: 6px 10px;
+    font-size: 11px;
+    gap: 4px;
+  }
+  .btn-logout span,
+  .btn-logout svg + span {
+    display: none;
+  }
+  .app-main {
+    padding: 10px;
+  }
+  .login-card,
+  .profile-modal,
+  .deactivated-card {
+    margin: 8px;
+    padding: 24px 16px;
+  }
+  .panel {
+    padding: 14px 10px;
+  }
+}
+
+/* ---------- Prevent Horizontal Overflow ---------- */
+html {
+  overflow-x: hidden;
+}
+body {
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- Touch-friendly targets ---------- */
+@media (pointer: coarse) {
+  .btn-icon {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .toggle-switch {
+    width: 50px;
+    height: 28px;
+  }
+  .toggle-slider::before {
+    width: 22px;
+    height: 22px;
+  }
+  .toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(22px);
+  }
+  .user-checkbox-item {
+    padding: 12px 14px;
+  }
+  .user-checkbox-item input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+  .file-download,
+  .file-delete {
+    min-height: 36px;
+    min-width: 36px;
+  }
+  .btn-back {
+    min-height: 40px;
+  }
+  .subcategory-item {
+    padding: 12px 14px;
+  }
+  .filter-select {
+    min-height: 40px;
+    padding: 10px 32px 10px 12px;
+  }
+  .btn-status-toggle {
+    min-height: 36px;
+    padding: 8px 16px;
+  }
 }
