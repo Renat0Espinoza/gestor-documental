@@ -6,7 +6,8 @@ import {
   ArrowLeft, FileText, Download, Inbox, Trash2, User, Save, Mail, Lock,
   Filter, Users, History, Shield, Eye, Phone, Loader2,
   Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
-  UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle, Info
+  UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle, Info,
+  ClipboardList, MessageSquare, Send, Clock, Circle
 } from 'lucide-react';
 import Login from './Login';
 import { auth, db } from './firebase';
@@ -79,6 +80,26 @@ interface ConfirmState {
   isDestructive?: boolean;
 }
 
+interface RequirementComment {
+  id: string;
+  text: string;
+  userId: string;
+  timestamp: string;
+}
+
+interface Requirement {
+  id: string;
+  title: string;
+  description: string;
+  priority: 'Alta' | 'Media' | 'Baja';
+  proyectoId: string;
+  createdBy: string;
+  status: 'Abierto' | 'En Progreso' | 'Cerrado';
+  comments: RequirementComment[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ===== HELPERS =====
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -96,7 +117,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 // ===== TIPOS DE VISTA =====
-type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'proyectos' | 'proyecto-detalle' | 'categorias' | 'papelera';
+type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'proyectos' | 'proyecto-detalle' | 'categorias' | 'papelera' | 'requerimientos' | 'requerimiento-detalle';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -170,6 +191,17 @@ function App() {
   // --- Documentos en Firestore ---
   const [documentosFS, setDocumentosFS] = useState<DocumentoFirestore[]>([]);
   const [uploadProyectoId, setUploadProyectoId] = useState<string | null>(null);
+
+  // --- Requerimientos ---
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [selectedRequirement, setSelectedRequirement] = useState<Requirement | null>(null);
+  const [showCreateRequirement, setShowCreateRequirement] = useState(false);
+  const [newReqTitle, setNewReqTitle] = useState('');
+  const [newReqDesc, setNewReqDesc] = useState('');
+  const [newReqPriority, setNewReqPriority] = useState<'Alta' | 'Media' | 'Baja'>('Media');
+  const [newReqProjectId, setNewReqProjectId] = useState('');
+  const [newCommentText, setNewCommentText] = useState('');
+  const [reqFilterStatus, setReqFilterStatus] = useState('all');
 
   // --- UI Global ---
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
@@ -1033,6 +1065,135 @@ function App() {
     setVistaActual('proyectos');
   };
 
+  // ===== REQUERIMIENTOS =====
+  const cargarRequerimientos = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/api/requirements`);
+      setRequirements(res.data);
+    } catch (err) {
+      console.error('Error cargando requerimientos:', err);
+      showToast('error', '❌ Error al cargar los requerimientos.');
+    }
+  };
+
+  const crearRequerimiento = async () => {
+    if (!newReqTitle.trim()) {
+      showToast('warning', '⚠️ El título es obligatorio.');
+      return;
+    }
+    try {
+      await axios.post(`${API_BASE}/api/requirements`, {
+        title: newReqTitle,
+        description: newReqDesc,
+        priority: newReqPriority,
+        proyectoId: newReqProjectId,
+        createdBy: auth.currentUser?.uid || ''
+      });
+      setNewReqTitle('');
+      setNewReqDesc('');
+      setNewReqPriority('Media');
+      setNewReqProjectId('');
+      setShowCreateRequirement(false);
+      cargarRequerimientos();
+      registrarAuditoria('Creó requerimiento', newReqTitle);
+      showToast('success', '✅ Requerimiento creado exitosamente.');
+    } catch {
+      showToast('error', '❌ Error al crear el requerimiento.');
+    }
+  };
+
+  const cambiarEstadoRequerimiento = async (reqId: string, nuevoEstado: string) => {
+    try {
+      const res = await axios.patch(`${API_BASE}/api/requirements/${reqId}/status`, { status: nuevoEstado });
+      const updated: Requirement = res.data;
+      setRequirements(prev => prev.map(r => r.id === reqId ? updated : r));
+      if (selectedRequirement?.id === reqId) setSelectedRequirement(updated);
+      registrarAuditoria(`Cambió estado de requerimiento a ${nuevoEstado}`, updated.title);
+      showToast('success', `✅ Estado cambiado a "${nuevoEstado}".`);
+    } catch {
+      showToast('error', '❌ Error al cambiar el estado.');
+    }
+  };
+
+  const agregarComentario = async (reqId: string) => {
+    if (!newCommentText.trim()) return;
+    try {
+      await axios.post(`${API_BASE}/api/requirements/${reqId}/comments`, {
+        text: newCommentText,
+        userId: auth.currentUser?.uid || '',
+        timestamp: new Date().toISOString()
+      });
+      setNewCommentText('');
+      // Recargar el requerimiento actualizado
+      const res = await axios.get(`${API_BASE}/api/requirements`);
+      const allReqs: Requirement[] = res.data;
+      setRequirements(allReqs);
+      const updated = allReqs.find(r => r.id === reqId);
+      if (updated) setSelectedRequirement(updated);
+      showToast('success', '💬 Comentario agregado.');
+    } catch {
+      showToast('error', '❌ Error al agregar el comentario.');
+    }
+  };
+
+  const eliminarRequerimiento = async (req: Requirement) => {
+    showConfirm(
+      'Eliminar Requerimiento',
+      `¿Estás seguro de que deseas eliminar el requerimiento "${req.title}"?`,
+      async () => {
+        try {
+          await axios.delete(`${API_BASE}/api/requirements/${req.id}`);
+          registrarAuditoria('Eliminó requerimiento', req.title);
+          showToast('success', '🗑️ Requerimiento eliminado.');
+          cargarRequerimientos();
+          if (selectedRequirement?.id === req.id) {
+            setSelectedRequirement(null);
+            setVistaActual('requerimientos');
+          }
+        } catch {
+          showToast('error', '❌ Error al eliminar el requerimiento.');
+        }
+      },
+      true,
+      'Eliminar',
+      'Cancelar'
+    );
+  };
+
+  const abrirRequerimientos = async () => {
+    await cargarRequerimientos();
+    await cargarProyectos();
+    setVistaActual('requerimientos');
+  };
+
+  const abrirRequerimientoDetalle = (req: Requirement) => {
+    setSelectedRequirement(req);
+    setNewCommentText('');
+    setVistaActual('requerimiento-detalle');
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Abierto': return '#4f8cff';
+      case 'En Progreso': return '#fbbf24';
+      case 'Cerrado': return '#34d399';
+      default: return '#8b92a8';
+    }
+  };
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'Alta': return '#f87171';
+      case 'Media': return '#fbbf24';
+      case 'Baja': return '#34d399';
+      default: return '#8b92a8';
+    }
+  };
+
+  const filteredRequirements = reqFilterStatus === 'all'
+    ? requirements
+    : requirements.filter(r => r.status === reqFilterStatus);
+
   const abrirCategorias = async () => {
     await cargarCategorias();
     setVistaActual('categorias');
@@ -1343,6 +1504,14 @@ function App() {
                     <p>Gestionar categorías y subcategorías</p>
                   </button>
                 )}
+
+                <button className="action-card" onClick={abrirRequerimientos}>
+                  <div className="card-icon" style={{ background: 'rgba(244, 114, 182, 0.1)' }}>
+                    <ClipboardList size={26} color="#f472b6" />
+                  </div>
+                  <h3>Requerimientos</h3>
+                  <p>Ciclo de vida y seguimiento de requerimientos</p>
+                </button>
               </div>
             </div>
 
@@ -2210,6 +2379,306 @@ function App() {
                 </button>
               </form>
             </div>
+          </div>
+        )}
+
+        {/* === REQUERIMIENTOS === */}
+        {vistaActual === 'requerimientos' && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
+                <ArrowLeft size={16} /> Volver
+              </button>
+              <h2>Requerimientos</h2>
+              <span className="badge">{requirements.length}</span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                <select
+                  className="filter-select"
+                  value={reqFilterStatus}
+                  onChange={(e) => setReqFilterStatus(e.target.value)}
+                  style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', padding: '6px 12px', borderRadius: 'var(--radius-sm)', fontSize: '13px' }}
+                >
+                  <option value="all">Todos los estados</option>
+                  <option value="Abierto">Abierto</option>
+                  <option value="En Progreso">En Progreso</option>
+                  <option value="Cerrado">Cerrado</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Crear requerimiento */}
+            {userRole !== 'lector' && (
+              <>
+                {!showCreateRequirement ? (
+                  <button className="btn-create" onClick={() => setShowCreateRequirement(true)} style={{ marginBottom: 20 }}>
+                    <Plus size={16} /> Nuevo Requerimiento
+                  </button>
+                ) : (
+                  <div className="create-form-card">
+                    <h3><ClipboardList size={18} /> Nuevo Requerimiento</h3>
+                    <div className="form-row">
+                      <div className="input-group">
+                        <label>Título <span className="required-badge">Obligatorio</span></label>
+                        <input
+                          type="text"
+                          placeholder="Ej: Implementar módulo de reportes"
+                          value={newReqTitle}
+                          onChange={(e) => setNewReqTitle(e.target.value)}
+                          style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '14px', fontFamily: 'inherit' }}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="input-group">
+                        <label>Descripción</label>
+                        <textarea
+                          placeholder="Descripción detallada del requerimiento..."
+                          value={newReqDesc}
+                          onChange={(e) => setNewReqDesc(e.target.value)}
+                          style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '14px', fontFamily: 'inherit', minHeight: '80px', resize: 'vertical' }}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="input-group">
+                        <label>Prioridad</label>
+                        <select
+                          value={newReqPriority}
+                          onChange={(e) => setNewReqPriority(e.target.value as 'Alta' | 'Media' | 'Baja')}
+                          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '14px', fontFamily: 'inherit' }}
+                        >
+                          <option value="Alta">Alta</option>
+                          <option value="Media">Media</option>
+                          <option value="Baja">Baja</option>
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Proyecto asociado</label>
+                        <select
+                          value={newReqProjectId}
+                          onChange={(e) => setNewReqProjectId(e.target.value)}
+                          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '14px', fontFamily: 'inherit' }}
+                        >
+                          <option value="">Sin proyecto</option>
+                          {proyectos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                      <button className="btn-create" onClick={crearRequerimiento}>
+                        <Plus size={14} /> Crear Requerimiento
+                      </button>
+                      <button className="btn-cancel" onClick={() => setShowCreateRequirement(false)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Lista de requerimientos */}
+            {filteredRequirements.length === 0 ? (
+              <div className="empty-state">
+                <ClipboardList size={48} />
+                <p>{requirements.length === 0 ? 'No hay requerimientos creados aún.' : 'No hay requerimientos con ese filtro.'}</p>
+              </div>
+            ) : (
+              <div className="req-list">
+                {filteredRequirements.map((req, index) => {
+                  const project = proyectos.find(p => p.id === req.proyectoId);
+                  return (
+                    <div key={req.id} className="req-card" onClick={() => abrirRequerimientoDetalle(req)} style={{ animationDelay: `${index * 0.05}s` }}>
+                      <div className="req-card-top">
+                        <div className="req-card-title-row">
+                          <h4>{req.title}</h4>
+                          <span className="req-status-badge" style={{ color: getStatusColor(req.status), borderColor: getStatusColor(req.status), background: `${getStatusColor(req.status)}15` }}>
+                            <Circle size={8} fill={getStatusColor(req.status)} /> {req.status}
+                          </span>
+                        </div>
+                        {req.description && <p className="req-card-desc">{req.description}</p>}
+                      </div>
+                      <div className="req-card-footer">
+                        <span className="req-priority-badge" style={{ color: getPriorityColor(req.priority), borderColor: getPriorityColor(req.priority), background: `${getPriorityColor(req.priority)}15` }}>
+                          {req.priority}
+                        </span>
+                        {project && (
+                          <span className="project-meta-tag" style={{ fontSize: '11px', padding: '2px 8px' }}>
+                            <Briefcase size={10} /> {project.nombre}
+                          </span>
+                        )}
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)', fontSize: '12px', marginLeft: 'auto' }}>
+                          <MessageSquare size={12} /> {req.comments.length}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                          <Clock size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                          {formatDate(req.createdAt)}
+                        </span>
+                      </div>
+                      {/* Admin actions */}
+                      {userRole !== 'lector' && (
+                        <div className="req-card-actions" onClick={(e) => e.stopPropagation()}>
+                          <select
+                            value={req.status}
+                            onChange={(e) => cambiarEstadoRequerimiento(req.id, e.target.value)}
+                            className="req-status-select"
+                            style={{ borderColor: getStatusColor(req.status) }}
+                          >
+                            <option value="Abierto">Abierto</option>
+                            <option value="En Progreso">En Progreso</option>
+                            <option value="Cerrado">Cerrado</option>
+                          </select>
+                          {userRole === 'admin' && (
+                            <button
+                              className="btn-icon danger"
+                              onClick={() => eliminarRequerimiento(req)}
+                              title="Eliminar requerimiento"
+                              style={{ width: 30, height: 30 }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === REQUERIMIENTO DETALLE === */}
+        {vistaActual === 'requerimiento-detalle' && selectedRequirement && (
+          <div className="panel">
+            <div className="panel-header">
+              <button className="btn-back" onClick={() => { setVistaActual('requerimientos'); abrirRequerimientos(); }}>
+                <ArrowLeft size={16} /> Volver a Requerimientos
+              </button>
+            </div>
+
+            {/* Cabecera del requerimiento */}
+            <div className="req-detail-header">
+              <div className="req-detail-info">
+                <h2>{selectedRequirement.title}</h2>
+                {selectedRequirement.description && (
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: 1.6, margin: '8px 0 16px 0' }}>
+                    {selectedRequirement.description}
+                  </p>
+                )}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <span className="req-status-badge" style={{ color: getStatusColor(selectedRequirement.status), borderColor: getStatusColor(selectedRequirement.status), background: `${getStatusColor(selectedRequirement.status)}15`, fontSize: '13px', padding: '5px 14px' }}>
+                    <Circle size={8} fill={getStatusColor(selectedRequirement.status)} /> {selectedRequirement.status}
+                  </span>
+                  <span className="req-priority-badge" style={{ color: getPriorityColor(selectedRequirement.priority), borderColor: getPriorityColor(selectedRequirement.priority), background: `${getPriorityColor(selectedRequirement.priority)}15`, fontSize: '13px', padding: '5px 14px' }}>
+                    {selectedRequirement.priority}
+                  </span>
+                  {selectedRequirement.proyectoId && (
+                    <span className="project-meta-tag">
+                      <Briefcase size={12} /> {proyectos.find(p => p.id === selectedRequirement.proyectoId)?.nombre || '—'}
+                    </span>
+                  )}
+                  <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                    Creado: {formatDate(selectedRequirement.createdAt)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controles de estado */}
+              {userRole !== 'lector' && (
+                <div className="req-detail-actions">
+                  <label style={{ color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Cambiar Estado</label>
+                  <div className="req-status-buttons">
+                    {['Abierto', 'En Progreso', 'Cerrado'].map(st => (
+                      <button
+                        key={st}
+                        className={`req-status-btn ${selectedRequirement.status === st ? 'active' : ''}`}
+                        onClick={() => cambiarEstadoRequerimiento(selectedRequirement.id, st)}
+                        style={{
+                          borderColor: selectedRequirement.status === st ? getStatusColor(st) : 'var(--border-subtle)',
+                          color: selectedRequirement.status === st ? getStatusColor(st) : 'var(--text-secondary)',
+                          background: selectedRequirement.status === st ? `${getStatusColor(st)}15` : 'var(--bg-input)'
+                        }}
+                      >
+                        <Circle size={8} fill={selectedRequirement.status === st ? getStatusColor(st) : 'transparent'} stroke={getStatusColor(st)} />
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+                  {userRole === 'admin' && (
+                    <button
+                      className="btn-icon danger"
+                      onClick={() => eliminarRequerimiento(selectedRequirement)}
+                      title="Eliminar requerimiento"
+                      style={{ width: 36, height: 36, marginTop: 8 }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Sección de Comentarios */}
+            <div className="section-divider" style={{ marginTop: '32px' }}>
+              <h3><MessageSquare size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Comentarios ({selectedRequirement.comments.length})</h3>
+            </div>
+
+            {/* Input de comentario */}
+            {userRole !== 'lector' && (
+              <div className="comment-input-area">
+                <div className="comment-avatar">
+                  <User size={16} />
+                </div>
+                <div className="comment-input-wrapper">
+                  <textarea
+                    placeholder="Escribe un comentario..."
+                    value={newCommentText}
+                    onChange={(e) => setNewCommentText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        agregarComentario(selectedRequirement.id);
+                      }
+                    }}
+                    rows={2}
+                  />
+                  <button
+                    className="comment-send-btn"
+                    onClick={() => agregarComentario(selectedRequirement.id)}
+                    disabled={!newCommentText.trim()}
+                    title="Enviar comentario"
+                  >
+                    <Send size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Lista de comentarios */}
+            {selectedRequirement.comments.length === 0 ? (
+              <div className="empty-state" style={{ padding: '30px 20px' }}>
+                <MessageSquare size={40} />
+                <p>No hay comentarios aún. ¡Sé el primero en comentar!</p>
+              </div>
+            ) : (
+              <div className="comments-list">
+                {[...selectedRequirement.comments].reverse().map((comment) => (
+                  <div key={comment.id} className="comment-item">
+                    <div className="comment-avatar">
+                      <User size={14} />
+                    </div>
+                    <div className="comment-body">
+                      <div className="comment-header">
+                        <span className="comment-author">{getNombreUsuario(comment.userId) || 'Usuario'}</span>
+                        <span className="comment-time">{formatDate(comment.timestamp)}</span>
+                      </div>
+                      <p className="comment-text">{comment.text}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </main>

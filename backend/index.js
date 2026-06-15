@@ -195,6 +195,138 @@ app.get('/api/github-status', async (_req, res) => {
 });
 
 // ==========================================
+// --- REQUERIMIENTOS (JSON file-based) ---
+// ==========================================
+const requirementsFile = path.join(__dirname, 'requirements.json');
+
+function loadRequirements() {
+    try {
+        if (!fs.existsSync(requirementsFile)) fs.writeFileSync(requirementsFile, '[]', 'utf-8');
+        return JSON.parse(fs.readFileSync(requirementsFile, 'utf-8'));
+    } catch {
+        return [];
+    }
+}
+
+function saveRequirements(data) {
+    fs.writeFileSync(requirementsFile, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+// Listar todos los requerimientos
+app.get('/api/requirements', (_req, res) => {
+    try {
+        res.json(loadRequirements());
+    } catch (err) {
+        console.error('Error al listar requerimientos:', err);
+        res.status(500).json({ error: 'No se pudieron leer los requerimientos' });
+    }
+});
+
+// Crear un requerimiento
+app.post('/api/requirements', (req, res) => {
+    try {
+        const { title, description, priority, proyectoId, createdBy } = req.body;
+        if (!title || !title.trim()) {
+            return res.status(400).json({ error: 'El título es obligatorio' });
+        }
+        const reqs = loadRequirements();
+        const newReq = {
+            id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9),
+            title: title.trim(),
+            description: (description || '').trim(),
+            priority: priority || 'Media',
+            proyectoId: proyectoId || '',
+            createdBy: createdBy || '',
+            status: 'Abierto',
+            comments: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        reqs.push(newReq);
+        saveRequirements(reqs);
+        console.log('✅ Requerimiento creado:', newReq.id);
+        res.status(201).json(newReq);
+    } catch (err) {
+        console.error('Error al crear requerimiento:', err);
+        res.status(500).json({ error: 'Error al crear el requerimiento' });
+    }
+});
+
+// Actualizar estado de un requerimiento
+app.patch('/api/requirements/:id/status', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const validStatuses = ['Abierto', 'En Progreso', 'Cerrado'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: `Estado inválido. Valores permitidos: ${validStatuses.join(', ')}` });
+        }
+        const reqs = loadRequirements();
+        const idx = reqs.findIndex(r => r.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Requerimiento no encontrado' });
+        }
+        reqs[idx].status = status;
+        reqs[idx].updatedAt = new Date().toISOString();
+        saveRequirements(reqs);
+        console.log(`📝 Requerimiento ${id} → ${status}`);
+        res.json(reqs[idx]);
+    } catch (err) {
+        console.error('Error al actualizar estado:', err);
+        res.status(500).json({ error: 'Error al actualizar el estado' });
+    }
+});
+
+// Agregar comentario a un requerimiento
+app.post('/api/requirements/:id/comments', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { text, userId, timestamp } = req.body;
+        if (!text || !text.trim()) {
+            return res.status(400).json({ error: 'El texto del comentario es obligatorio' });
+        }
+        const reqs = loadRequirements();
+        const idx = reqs.findIndex(r => r.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Requerimiento no encontrado' });
+        }
+        const comment = {
+            id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+            text: text.trim(),
+            userId: userId || '',
+            timestamp: timestamp || new Date().toISOString()
+        };
+        reqs[idx].comments.push(comment);
+        reqs[idx].updatedAt = new Date().toISOString();
+        saveRequirements(reqs);
+        console.log(`💬 Comentario añadido a requerimiento ${id}`);
+        res.status(201).json(comment);
+    } catch (err) {
+        console.error('Error al agregar comentario:', err);
+        res.status(500).json({ error: 'Error al agregar el comentario' });
+    }
+});
+
+// Eliminar un requerimiento
+app.delete('/api/requirements/:id', (req, res) => {
+    try {
+        const { id } = req.params;
+        const reqs = loadRequirements();
+        const idx = reqs.findIndex(r => r.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Requerimiento no encontrado' });
+        }
+        reqs.splice(idx, 1);
+        saveRequirements(reqs);
+        console.log(`🗑️ Requerimiento eliminado: ${id}`);
+        res.json({ success: true, message: 'Requerimiento eliminado correctamente' });
+    } catch (err) {
+        console.error('Error al eliminar requerimiento:', err);
+        res.status(500).json({ error: 'Error al eliminar el requerimiento' });
+    }
+});
+
+// ==========================================
 // --- SERVIDOR DE REACT (Archivos estáticos) ---
 // ==========================================
 app.use(express.static(path.join(__dirname, 'public')));
