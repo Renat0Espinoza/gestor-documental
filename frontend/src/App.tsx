@@ -12,7 +12,7 @@ import {
 import Login from './Login';
 import { auth, db } from './firebase';
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc, addDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, addDoc, deleteDoc, serverTimestamp, query, orderBy, where, writeBatch, onSnapshot } from 'firebase/firestore';
 
 // ===== INTERFACES =====
 interface FileInfo {
@@ -137,9 +137,8 @@ function App() {
   const [filterCategoriaId, setFilterCategoriaId] = useState('all');
   const [filterSubcategoriaId, setFilterSubcategoriaId] = useState('all');
   const [usersList, setUsersList] = useState<any[]>([]);
-  const [historyLogs, setHistoryLogs] = useState<any[]>([
-    { id: 1, usuario: 'Sistema', accion: 'Auditoría inicializada', documento: 'N/A', fecha: new Date().toISOString() }
-  ]);
+  const [historyLogs, setHistoryLogs] = useState<any[]>([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
 
   // --- Estado de perfil ---
   const [displayName, setDisplayName] = useState('');
@@ -279,6 +278,7 @@ function App() {
             }
           } else {
             setUserRole('lector');
+            setShowProfileModal(true);
           }
         } catch (error) {
           console.error("Error al obtener rol:", error);
@@ -303,15 +303,62 @@ function App() {
   }, [isAuthenticated]);
 
   // ===== AUDITORÍA =====
-  const registrarAuditoria = (accion: string, documento: string) => {
-    const newLog = {
-      id: Date.now(),
-      usuario: auth.currentUser?.displayName || auth.currentUser?.email || 'Usuario',
-      accion,
-      documento,
-      fecha: new Date().toISOString()
-    };
-    setHistoryLogs(prev => [newLog, ...prev]);
+  const registrarAuditoria = async (accion: string, documento: string) => {
+    try {
+      await addDoc(collection(db, 'auditoria'), {
+        usuario: auth.currentUser?.displayName || auth.currentUser?.email || 'Usuario',
+        userId: auth.currentUser?.uid || 'unknown',
+        accion,
+        documento,
+        fecha: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error al registrar auditoría:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    setLoadingAudit(true);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const limitDateISO = thirtyDaysAgo.toISOString();
+
+    const q = query(
+      collection(db, 'auditoria'),
+      where('fecha', '>=', limitDateISO),
+      orderBy('fecha', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHistoryLogs(logs);
+      setLoadingAudit(false);
+    }, (error) => {
+      console.error('Error al cargar auditoría:', error);
+      setLoadingAudit(false);
+    });
+
+    return () => unsubscribe();
+  }, [isAuthenticated]);
+
+  const limpiarAuditoria = async () => {
+    try {
+      setLoadingAudit(true);
+      const snapshot = await getDocs(collection(db, 'auditoria'));
+      const batch = writeBatch(db);
+      snapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+      showToast('success', '✅ Auditoría limpiada exitosamente.');
+    } catch (error) {
+      console.error('Error al limpiar auditoría:', error);
+      showToast('error', 'Error al limpiar la auditoría.');
+    } finally {
+      setLoadingAudit(false);
+    }
   };
 
   // ===== SUBIDA DE ARCHIVOS =====
@@ -1853,13 +1900,32 @@ function App() {
         {/* === HISTORIAL (Solo Admin) === */}
         {vistaActual === 'historial' && userRole === 'admin' && (
           <div className="panel">
-            <div className="panel-header">
+            <div className="panel-header" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
               <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
                 <ArrowLeft size={16} /> Volver
               </button>
-              <h2>Historial y Auditoría</h2>
+              <h2 style={{ margin: 0 }}>Historial y Auditoría <span className="badge">{historyLogs.length}</span></h2>
+              <button 
+                onClick={() => showConfirm('Limpiar Auditoría', '¿Estás seguro de que deseas eliminar todos los registros de auditoría? Esta acción no se puede deshacer.', limpiarAuditoria, true)}
+                style={{ marginLeft: 'auto', background: 'rgba(248,113,113,0.1)', color: 'var(--accent-red)', border: '1px solid rgba(248,113,113,0.2)', padding: '8px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit' }}
+                disabled={loadingAudit || historyLogs.length === 0}
+              >
+                <Trash2 size={16} /> Limpiar Registros
+              </button>
             </div>
-            <div style={{ background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+
+            {loadingAudit ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <Loader2 className="spin-icon" size={24} style={{ margin: '0 auto 10px auto' }} />
+                <p style={{ fontSize: '14px', margin: 0 }}>Cargando registros...</p>
+              </div>
+            ) : historyLogs.length === 0 ? (
+              <div className="empty-state">
+                <History size={48} />
+                <p>No hay registros de auditoría en los últimos 30 días.</p>
+              </div>
+            ) : (
+              <div style={{ background: 'var(--bg-input)', borderRadius: '8px', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
               <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', color: 'var(--text-primary)', fontSize: '14px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-card)', background: 'var(--bg-glass)' }}>
@@ -1885,6 +1951,7 @@ function App() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         )}
 
