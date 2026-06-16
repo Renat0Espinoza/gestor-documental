@@ -1387,9 +1387,9 @@ function App() {
 
       setDisplayName(profileName.trim());
       setShowProfileModal(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error al completar perfil:', err);
-      setProfileError('Ocurrió un error al guardar tu perfil. Inténtalo de nuevo.');
+      setProfileError('Error al guardar: ' + (err.message || 'Inténtalo de nuevo.'));
     } finally {
       setProfileLoading(false);
     }
