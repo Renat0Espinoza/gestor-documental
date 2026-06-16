@@ -1934,6 +1934,21 @@ html, body, #root {
   .github-status {
     font-size: 11px;
   }
+
+  /* --- Requerimientos --- */
+  .req-card {
+    padding: 16px;
+  }
+  .req-card-footer {
+    gap: 8px;
+  }
+  .req-card-actions {
+    flex-wrap: wrap;
+  }
+  .req-status-select {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 /* ---------- Small Phones (≤ 480px) ---------- */
@@ -2110,6 +2125,103 @@ html, body, #root {
   .btn-primary {
     padding: 12px;
     font-size: 14px;
+  }
+
+  /* --- Logout text hidden on small screens --- */
+  .logout-text {
+    display: none;
+  }
+  .btn-logout {
+    padding: 8px;
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: center;
+  }
+
+  /* --- Welcome banner role badge --- */
+  .welcome-banner {
+    gap: 10px;
+  }
+  .welcome-banner > div:last-child {
+    font-size: 11px !important;
+    padding: 4px 10px !important;
+  }
+
+  /* --- Requerimientos --- */
+  .req-card {
+    padding: 14px;
+  }
+  .req-card-title-row h4 {
+    font-size: 14px;
+  }
+  .req-card-desc {
+    font-size: 12px;
+  }
+  .req-card-footer {
+    gap: 6px;
+    font-size: 11px;
+  }
+  .req-card-footer > span {
+    font-size: 11px;
+  }
+  .req-status-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+  }
+  .req-priority-badge {
+    font-size: 9px;
+    padding: 2px 8px;
+  }
+  .req-card-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .req-status-select {
+    flex: 1;
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+
+  /* --- Requirement detail --- */
+  .req-detail-info h2 {
+    font-size: 17px;
+  }
+  .req-status-btn {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
+  /* --- Comment layout compact --- */
+  .comment-input-area {
+    gap: 8px;
+  }
+  .comment-avatar {
+    width: 30px;
+    height: 30px;
+  }
+  .comment-item {
+    gap: 8px;
+    padding: 10px 0;
+  }
+  .comment-author {
+    font-size: 12px;
+  }
+  .comment-text {
+    font-size: 13px;
+  }
+
+  /* --- Table card improvements --- */
+  .panel td[data-label="Cambiar a"] select {
+    width: 100%;
+    font-size: 13px;
+  }
+  .panel td[data-label="Estado"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel td[data-label="Estado"]::before {
+    margin-bottom: 0;
   }
 }
 

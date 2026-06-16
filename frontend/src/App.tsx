@@ -719,7 +719,7 @@ function App() {
 
   const cambiarRol = async (userId: string, nuevoRol: string) => {
     try {
-      await updateDoc(doc(db, 'users', userId), { role: nuevoRol });
+      await updateDoc(doc(db, 'users', userId), { rol: nuevoRol });
       cargarUsuarios();
       showToast('success', '✅ Rol actualizado correctamente.');
     } catch {
@@ -1448,10 +1448,12 @@ function App() {
       <header className="app-header">
         <div>
           <h1>Gestión Documental</h1>
-          <div className="header-sub">Panel de Administración</div>
+          <div className="header-sub">
+            {userRole === 'admin' ? 'Panel de Administración' : userRole === 'colaborador' ? 'Panel de Colaborador' : 'Panel de Lector'}
+          </div>
         </div>
         <button onClick={() => { setIsAuthenticated(false); signOut(auth); }} className="btn-logout" title="Cerrar Sesión">
-          <LogOut size={16} /> Salir
+          <LogOut size={16} /> <span className="logout-text">Salir</span>
         </button>
       </header>
 
