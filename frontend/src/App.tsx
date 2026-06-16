@@ -12,7 +12,7 @@ import {
 import Login from './Login';
 import { auth, db } from './firebase';
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, getDocs, updateDoc, addDoc, deleteDoc, serverTimestamp, query, orderBy, where, writeBatch, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, addDoc, deleteDoc, serverTimestamp, query, orderBy, where, writeBatch, onSnapshot, setDoc } from 'firebase/firestore';
 
 // ===== INTERFACES =====
 interface FileInfo {
@@ -283,6 +283,7 @@ function App() {
         } catch (error) {
           console.error("Error al obtener rol:", error);
           setUserRole('lector');
+          setShowProfileModal(true);
         }
       }
     });
@@ -1373,11 +1374,16 @@ function App() {
 
       await updateProfile(user, { displayName: profileName.trim() });
 
-      await updateDoc(doc(db, 'users', user.uid), {
+      // Usamos setDoc con merge por si Login.tsx no pudo crear el documento inicialmente
+      await setDoc(doc(db, 'users', user.uid), {
         nombre: profileName.trim(),
         telefono: profilePhone.trim(),
-        perfilCompleto: true
-      });
+        correo: user.email || '',
+        rol: 'lector',
+        estado: 'Activo',
+        perfilCompleto: true,
+        fechaCreacion: new Date().toISOString()
+      }, { merge: true });
 
       setDisplayName(profileName.trim());
       setShowProfileModal(false);
