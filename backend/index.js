@@ -277,6 +277,25 @@ app.patch('/api/requirements/:id/status', (req, res) => {
     }
 });
 
+// Eliminar un requerimiento
+app.delete('/api/requirements/:id', (req, res) => {
+    try {
+        const { id } = req.params;
+        const reqs = loadRequirements();
+        const idx = reqs.findIndex(r => r.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Requerimiento no encontrado' });
+        }
+        reqs.splice(idx, 1);
+        saveRequirements(reqs);
+        console.log(`🗑️ Requerimiento eliminado: ${id}`);
+        res.json({ success: true, message: 'Requerimiento eliminado' });
+    } catch (err) {
+        console.error('Error al eliminar requerimiento:', err);
+        res.status(500).json({ error: 'Error al eliminar el requerimiento' });
+    }
+});
+
 // Agregar comentario a un requerimiento
 app.post('/api/requirements/:id/comments', (req, res) => {
     try {

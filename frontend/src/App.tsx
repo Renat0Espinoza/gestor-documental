@@ -1140,7 +1140,6 @@ function App() {
       setNewReqTitle('');
       setNewReqDesc('');
       setNewReqPriority('Media');
-      setNewReqProjectId('');
       setShowCreateRequirement(false);
       cargarRequerimientos();
       registrarAuditoria('Creó requerimiento', newReqTitle);
@@ -1150,7 +1149,18 @@ function App() {
     }
   };
 
-  const cambiarEstadoRequerimiento = async (reqId: string, nuevoEstado: string) => {
+  const eliminarRequerimiento = async (id: string) => {
+    try {
+      await axios.delete(`${API_BASE}/api/requirements/${id}`);
+      cargarRequerimientos();
+      registrarAuditoria('Eliminó requerimiento', `ID: ${id}`);
+      showToast('success', '✅ Requerimiento eliminado.');
+    } catch {
+      showToast('error', '❌ Error al eliminar el requerimiento.');
+    }
+  };
+
+  const actualizarEstadoReq = async (reqId: string, nuevoEstado: string) => {
     try {
       const res = await axios.patch(`${API_BASE}/api/requirements/${reqId}/status`, { status: nuevoEstado });
       const updated: Requirement = res.data;
@@ -1184,33 +1194,8 @@ function App() {
     }
   };
 
-  const eliminarRequerimiento = async (req: Requirement) => {
-    showConfirm(
-      'Eliminar Requerimiento',
-      `¿Estás seguro de que deseas eliminar el requerimiento "${req.title}"?`,
-      async () => {
-        try {
-          await axios.delete(`${API_BASE}/api/requirements/${req.id}`);
-          registrarAuditoria('Eliminó requerimiento', req.title);
-          showToast('success', '🗑️ Requerimiento eliminado.');
-          cargarRequerimientos();
-          if (selectedRequirement?.id === req.id) {
-            setSelectedRequirement(null);
-            setVistaActual('requerimientos');
-          }
-        } catch {
-          showToast('error', '❌ Error al eliminar el requerimiento.');
-        }
-      },
-      true,
-      'Eliminar',
-      'Cancelar'
-    );
-  };
-
-  const abrirRequerimientos = async () => {
+  const abrirRequerimientos = async (proyectoId?: string) => {
     await cargarRequerimientos();
-    await cargarProyectos();
     setVistaActual('requerimientos');
   };
 
@@ -1238,9 +1223,9 @@ function App() {
     }
   };
 
-  const filteredRequirements = reqFilterStatus === 'all'
-    ? requirements
-    : requirements.filter(r => r.status === reqFilterStatus);
+  const filteredRequirements = requirements
+    .filter(req => selectedProject ? req.proyectoId === selectedProject.id : true)
+    .filter(req => reqFilterStatus === 'all' ? true : req.status === reqFilterStatus);
 
   const abrirCategorias = async () => {
     await cargarCategorias();
@@ -1559,14 +1544,6 @@ function App() {
                     <p>Gestionar categorías y subcategorías</p>
                   </button>
                 )}
-
-                <button className="action-card" onClick={abrirRequerimientos}>
-                  <div className="card-icon" style={{ background: 'rgba(244, 114, 182, 0.1)' }}>
-                    <ClipboardList size={26} color="#f472b6" />
-                  </div>
-                  <h3>Requerimientos</h3>
-                  <p>Ciclo de vida y seguimiento de requerimientos</p>
-                </button>
               </div>
             </div>
 
@@ -2252,6 +2229,23 @@ function App() {
                 </div>
               )}
             </div>
+            
+            <div style={{ marginTop: 24, marginBottom: 16 }}>
+              <button 
+                onClick={async () => {
+                  if (selectedProject) {
+                    await cargarRequerimientos();
+                    setReqFilterStatus('all');
+                    setNewReqProjectId(selectedProject.id);
+                    setVistaActual('requerimientos');
+                  }
+                }} 
+                className="btn-primary" 
+                style={{ width: '100%', display: 'flex', justifyContent: 'center', background: 'var(--accent-purple)', borderColor: 'var(--accent-purple)' }}
+              >
+                <ClipboardList size={18} /> Ver Requerimientos del Proyecto
+              </button>
+            </div>
 
             {/* Áreas */}
             <div className="section-divider">
@@ -2458,14 +2452,16 @@ function App() {
         )}
 
         {/* === REQUERIMIENTOS === */}
-        {vistaActual === 'requerimientos' && (
+        {vistaActual === 'requerimientos' && selectedProject && (
           <div className="panel">
             <div className="panel-header">
-              <button className="btn-back" onClick={() => setVistaActual('dashboard')}>
-                <ArrowLeft size={16} /> Volver
+              <button className="btn-back" onClick={() => setVistaActual('proyecto-detalle')}>
+                <ArrowLeft size={16} /> Volver al Proyecto
               </button>
-              <h2>Requerimientos</h2>
-              <span className="badge">{requirements.length}</span>
+              <h2>Requerimientos: {selectedProject.nombre}</h2>
+              <span className="badge">
+                {requirements.filter(r => r.proyectoId === selectedProject.id).length}
+              </span>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                 <select
                   className="filter-select"
@@ -2527,17 +2523,6 @@ function App() {
                           <option value="Baja">Baja</option>
                         </select>
                       </div>
-                      <div className="input-group">
-                        <label>Proyecto asociado</label>
-                        <select
-                          value={newReqProjectId}
-                          onChange={(e) => setNewReqProjectId(e.target.value)}
-                          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '14px', fontFamily: 'inherit' }}
-                        >
-                          <option value="">Sin proyecto</option>
-                          {proyectos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                        </select>
-                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                       <button className="btn-create" onClick={crearRequerimiento}>
@@ -2566,10 +2551,27 @@ function App() {
                     <div key={req.id} className="req-card" onClick={() => abrirRequerimientoDetalle(req)} style={{ animationDelay: `${index * 0.05}s` }}>
                       <div className="req-card-top">
                         <div className="req-card-title-row">
-                          <h4>{req.title}</h4>
+                          <h4 style={{ flex: 1 }}>{req.title}</h4>
                           <span className="req-status-badge" style={{ color: getStatusColor(req.status), borderColor: getStatusColor(req.status), background: `${getStatusColor(req.status)}15` }}>
                             <Circle size={8} fill={getStatusColor(req.status)} /> {req.status}
                           </span>
+                          {userRole === 'admin' && (
+                            <button 
+                              className="btn-icon danger" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showConfirm(
+                                  'Eliminar Requerimiento', 
+                                  '¿Estás seguro de que deseas eliminar este requerimiento?', 
+                                  () => eliminarRequerimiento(req.id), 
+                                  true
+                                );
+                              }}
+                              title="Eliminar requerimiento"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                         </div>
                         {req.description && <p className="req-card-desc">{req.description}</p>}
                       </div>
@@ -2595,7 +2597,7 @@ function App() {
                         <div className="req-card-actions" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={req.status}
-                            onChange={(e) => cambiarEstadoRequerimiento(req.id, e.target.value)}
+                            onChange={(e) => actualizarEstadoReq(req.id, e.target.value)}
                             className="req-status-select"
                             style={{ borderColor: getStatusColor(req.status) }}
                           >
@@ -2606,7 +2608,15 @@ function App() {
                           {userRole === 'admin' && (
                             <button
                               className="btn-icon danger"
-                              onClick={() => eliminarRequerimiento(req)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showConfirm(
+                                  'Eliminar Requerimiento', 
+                                  '¿Estás seguro de que deseas eliminar este requerimiento?', 
+                                  () => eliminarRequerimiento(req.id), 
+                                  true
+                                );
+                              }}
                               title="Eliminar requerimiento"
                               style={{ width: 30, height: 30 }}
                             >
@@ -2668,7 +2678,7 @@ function App() {
                       <button
                         key={st}
                         className={`req-status-btn ${selectedRequirement.status === st ? 'active' : ''}`}
-                        onClick={() => cambiarEstadoRequerimiento(selectedRequirement.id, st)}
+                        onClick={() => actualizarEstadoReq(selectedRequirement.id, st)}
                         style={{
                           borderColor: selectedRequirement.status === st ? getStatusColor(st) : 'var(--border-subtle)',
                           color: selectedRequirement.status === st ? getStatusColor(st) : 'var(--text-secondary)',
@@ -2758,14 +2768,14 @@ function App() {
         )}
       </main>
 
-      {/* MODAL: ASIGNAR COLABORADORES */}
+      {/* MODAL: ASIGNAR COLABORADORES / LECTORES */}
       {showAssignModal && (
         <div className="modal-overlay" onClick={() => setShowAssignModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Asignar Colaboradores</h3>
+            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Asignar Usuarios al Área</h3>
             <div className="user-checkbox-list">
               {usersList
-                .filter(u => u.rol === 'colaborador' && u.activo !== false)
+                .filter(u => (u.rol === 'colaborador' || u.rol === 'lector') && u.activo !== false)
                 .map(u => (
                   <label key={u.id} className="user-checkbox-item">
                     <input
@@ -2780,14 +2790,19 @@ function App() {
                       }}
                     />
                     <div className="user-info">
-                      <div className="name">{u.nombre || 'Sin nombre'}</div>
+                      <div className="name">
+                        {u.nombre || 'Sin nombre'} 
+                        <span style={{ fontSize: '11px', marginLeft: 6, color: u.rol === 'colaborador' ? 'var(--accent-green)' : 'var(--text-muted)' }}>
+                          ({u.rol})
+                        </span>
+                      </div>
                       <div className="email">{u.correo || u.email}</div>
                     </div>
                   </label>
                 ))}
-              {usersList.filter(u => u.rol === 'colaborador' && u.activo !== false).length === 0 && (
+              {usersList.filter(u => (u.rol === 'colaborador' || u.rol === 'lector') && u.activo !== false).length === 0 && (
                 <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
-                  No hay colaboradores activos disponibles.
+                  No hay usuarios activos disponibles para asignar.
                 </p>
               )}
             </div>
