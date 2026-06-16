@@ -1194,7 +1194,7 @@ function App() {
     }
   };
 
-  const abrirRequerimientos = async (proyectoId?: string) => {
+  const abrirRequerimientos = async (_proyectoId?: string) => {
     await cargarRequerimientos();
     setVistaActual('requerimientos');
   };
@@ -2693,7 +2693,7 @@ function App() {
                   {userRole === 'admin' && (
                     <button
                       className="btn-icon danger"
-                      onClick={() => eliminarRequerimiento(selectedRequirement)}
+                      onClick={() => eliminarRequerimiento(selectedRequirement.id)}
                       title="Eliminar requerimiento"
                       style={{ width: 36, height: 36, marginTop: 8 }}
                     >
