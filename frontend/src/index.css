@@ -2754,16 +2754,16 @@ body {
 
 .req-chart-center-label {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  width: 100%;
   pointer-events: none;
   animation: countUp 0.5s ease 0.3s both;
 }
