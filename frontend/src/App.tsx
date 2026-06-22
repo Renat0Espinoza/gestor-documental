@@ -1171,6 +1171,7 @@ function App() {
   const abrirProyectos = async () => {
     await cargarProyectos();
     await cargarCategorias();
+    await cargarRequerimientos();
     const snap = await getDocs(collection(db, 'categorias'));
     const cats: Categoria[] = [];
     snap.forEach(d => cats.push({ id: d.id, ...d.data() } as Categoria));
@@ -2162,6 +2163,90 @@ function App() {
               <h2>Proyectos</h2>
               <span className="badge">{proyectosVisibles.length}</span>
             </div>
+
+            {/* Gráfico de Requerimientos por Estado */}
+            {userRole === 'admin' && requirements.length > 0 && (() => {
+              const abiertos = requirements.filter(r => r.status === 'Abierto').length;
+              const enProgreso = requirements.filter(r => r.status === 'En Progreso').length;
+              const cerrados = requirements.filter(r => r.status === 'Cerrado').length;
+              const total = requirements.length;
+              const radius = 70;
+              const strokeWidth = 22;
+              const circumference = 2 * Math.PI * radius;
+              
+              const segments = [
+                { label: 'Abiertos', count: abiertos, color: '#34d399', bgColor: 'rgba(52, 211, 153, 0.12)' },
+                { label: 'En Progreso', count: enProgreso, color: '#fbbf24', bgColor: 'rgba(251, 191, 36, 0.12)' },
+                { label: 'Cerrados', count: cerrados, color: '#f87171', bgColor: 'rgba(248, 113, 113, 0.12)' },
+              ];
+
+              let accumulatedOffset = 0;
+
+              return (
+                <div className="req-chart-container">
+                  <div className="req-chart-header">
+                    <ClipboardList size={16} />
+                    <span>Estado de Requerimientos</span>
+                    <span className="req-chart-total-badge">{total} total</span>
+                  </div>
+                  <div className="req-chart-body">
+                    <div className="req-chart-donut-wrapper">
+                      <svg viewBox="0 0 200 200" className="req-chart-svg">
+                        {/* Background circle */}
+                        <circle
+                          cx="100" cy="100" r={radius}
+                          fill="none"
+                          stroke="rgba(255,255,255,0.05)"
+                          strokeWidth={strokeWidth}
+                        />
+                        {/* Data segments */}
+                        {segments.map((seg, i) => {
+                          const segmentLength = total > 0 ? (seg.count / total) * circumference : 0;
+                          const offset = accumulatedOffset;
+                          accumulatedOffset += segmentLength;
+                          if (seg.count === 0) return null;
+                          return (
+                            <circle
+                              key={i}
+                              cx="100" cy="100" r={radius}
+                              fill="none"
+                              stroke={seg.color}
+                              strokeWidth={strokeWidth}
+                              strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+                              strokeDashoffset={-offset}
+                              strokeLinecap="round"
+                              className="req-chart-segment"
+                              style={{ 
+                                transform: 'rotate(-90deg)', 
+                                transformOrigin: '100px 100px',
+                                animationDelay: `${i * 0.15}s`,
+                                filter: `drop-shadow(0 0 6px ${seg.color}40)`
+                              }}
+                            />
+                          );
+                        })}
+                      </svg>
+                      <div className="req-chart-center-label">
+                        <span className="req-chart-center-number">{total}</span>
+                        <span className="req-chart-center-text">Requerimientos</span>
+                      </div>
+                    </div>
+                    <div className="req-chart-legend">
+                      {segments.map((seg, i) => (
+                        <div key={i} className="req-chart-legend-item">
+                          <div className="req-chart-legend-dot" style={{ background: seg.color, boxShadow: `0 0 8px ${seg.color}50` }} />
+                          <span className="req-chart-legend-label">{seg.label}</span>
+                          <span className="req-chart-legend-count" style={{ color: seg.color }}>{seg.count}</span>
+                          <span className="req-chart-legend-pct">
+                            {total > 0 ? Math.round((seg.count / total) * 100) : 0}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Formulario crear proyecto (solo admin) */}
             {userRole === 'admin' && (
