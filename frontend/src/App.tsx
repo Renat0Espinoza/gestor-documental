@@ -57,10 +57,16 @@ interface Proyecto {
   creadoPor: string;
 }
 
+interface AreaLector {
+  uid: string;
+  activo: boolean;
+}
+
 interface Area {
   id: string;
   nombre: string;
   colaboradores: string[];
+  lectores?: AreaLector[];
   proyectoId: string;
 }
 
@@ -93,6 +99,9 @@ interface Requirement {
   description: string;
   priority: 'Alta' | 'Media' | 'Baja';
   proyectoId: string;
+  areaId?: string;
+  colaboradores?: string[];
+  lectores?: AreaLector[];
   createdBy: string;
   status: 'Abierto' | 'En Progreso' | 'Cerrado';
   comments: RequirementComment[];
@@ -187,6 +196,12 @@ function App() {
   const [assignAreaId, setAssignAreaId] = useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = useState<string[]>([]);
 
+  // --- Modal Asignar Lectores ---
+  const [showAddReaderModal, setShowAddReaderModal] = useState(false);
+  const [addReaderAreaId, setAddReaderAreaId] = useState<string | null>(null);
+  const [selectedReaders, setSelectedReaders] = useState<string[]>([]);
+  const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
+
   // --- Documentos en Firestore ---
   const [documentosFS, setDocumentosFS] = useState<DocumentoFirestore[]>([]);
   const [uploadProyectoId, setUploadProyectoId] = useState<string | null>(null);
@@ -199,6 +214,7 @@ function App() {
   const [newReqDesc, setNewReqDesc] = useState('');
   const [newReqPriority, setNewReqPriority] = useState<'Alta' | 'Media' | 'Baja'>('Media');
   const [newReqProjectId, setNewReqProjectId] = useState('');
+  const [newReqAreaId, setNewReqAreaId] = useState('');
   const [newCommentText, setNewCommentText] = useState('');
   const [reqFilterStatus, setReqFilterStatus] = useState('all');
 
@@ -1042,7 +1058,8 @@ function App() {
     try {
       await addDoc(collection(db, 'proyectos', proyectoId, 'areas'), {
         nombre: newAreaName,
-        colaboradores: []
+        colaboradores: [],
+        lectores: []
       });
       setNewAreaName('');
       cargarAreas(proyectoId);
@@ -1095,6 +1112,77 @@ function App() {
     }
   };
 
+  // --- Asignar Lectores a Área ---
+  const openAddReaderAreaModal = (areaId: string) => {
+    setAddReaderAreaId(areaId);
+    setSelectedReaders([]);
+    cargarUsuarios();
+    setShowAddReaderModal(true);
+  };
+
+  const guardarLectoresArea = async () => {
+    if (!selectedProject || !addReaderAreaId) return;
+    try {
+      const area = projectAreas.find(a => a.id === addReaderAreaId);
+      if (!area) return;
+      const currentLectores = area.lectores || [];
+      const newLectores = selectedReaders.map(uid => ({ uid, activo: true }));
+      
+      const combined = [...currentLectores];
+      for (const nl of newLectores) {
+        if (!combined.some(c => c.uid === nl.uid)) {
+          combined.push(nl);
+        }
+      }
+      await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', addReaderAreaId), {
+        lectores: combined
+      });
+      setShowAddReaderModal(false);
+      setAddReaderAreaId(null);
+      setSelectedReaders([]);
+      cargarAreas(selectedProject.id);
+      showToast('success', '✅ Lectores añadidos al área.');
+    } catch {
+      showToast('error', '❌ Error al añadir lectores.');
+    }
+  };
+
+  const toggleLectorAreaActivo = async (areaId: string, lectorUid: string, currentActivo: boolean) => {
+    if (!selectedProject) return;
+    try {
+      const area = projectAreas.find(a => a.id === areaId);
+      if (!area) return;
+      const updatedLectores = (area.lectores || []).map(l => 
+        l.uid === lectorUid ? { ...l, activo: !currentActivo } : l
+      );
+      await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', areaId), {
+        lectores: updatedLectores
+      });
+      cargarAreas(selectedProject.id);
+      showToast('success', `Lector ${!currentActivo ? 'activado' : 'desactivado'}.`);
+    } catch {
+      showToast('error', 'Error al cambiar estado del lector.');
+    }
+  };
+
+  const eliminarLectorArea = async (areaId: string, lectorUid: string) => {
+    if (!selectedProject) return;
+    showConfirm('Eliminar Lector', '¿Eliminar este lector del área?', async () => {
+      try {
+        const area = projectAreas.find(a => a.id === areaId);
+        if (!area) return;
+        const updatedLectores = (area.lectores || []).filter(l => l.uid !== lectorUid);
+        await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', areaId), {
+          lectores: updatedLectores
+        });
+        cargarAreas(selectedProject.id);
+        showToast('success', 'Lector eliminado.');
+      } catch {
+        showToast('error', 'Error al eliminar lector.');
+      }
+    }, true);
+  };
+
   const abrirProyectoDetalle = async (proyecto: Proyecto) => {
     setSelectedProject(proyecto);
     await cargarAreas(proyecto.id);
@@ -1129,17 +1217,29 @@ function App() {
       showToast('warning', '⚠️ El título es obligatorio.');
       return;
     }
+    if (!newReqAreaId) {
+      showToast('warning', '⚠️ Debes seleccionar un área.');
+      return;
+    }
+
+    const area = projectAreas.find(a => a.id === newReqAreaId);
+    if (!area) return;
+
     try {
       await axios.post(`${API_BASE}/api/requirements`, {
         title: newReqTitle,
         description: newReqDesc,
         priority: newReqPriority,
         proyectoId: newReqProjectId,
+        areaId: newReqAreaId,
+        colaboradores: area.colaboradores || [],
+        lectores: area.lectores ? area.lectores.filter(l => l.activo) : [],
         createdBy: auth.currentUser?.uid || ''
       });
       setNewReqTitle('');
       setNewReqDesc('');
       setNewReqPriority('Media');
+      setNewReqAreaId('');
       setShowCreateRequirement(false);
       cargarRequerimientos();
       registrarAuditoria('Creó requerimiento', newReqTitle);
@@ -1170,6 +1270,19 @@ function App() {
       showToast('success', `✅ Estado cambiado a "${nuevoEstado}".`);
     } catch {
       showToast('error', '❌ Error al cambiar el estado.');
+    }
+  };
+
+  const actualizarPrioridadReq = async (reqId: string, nuevaPrioridad: string) => {
+    try {
+      const res = await axios.patch(`${API_BASE}/api/requirements/${reqId}/priority`, { priority: nuevaPrioridad });
+      const updated: Requirement = res.data;
+      setRequirements(prev => prev.map(r => r.id === reqId ? updated : r));
+      if (selectedRequirement?.id === reqId) setSelectedRequirement(updated);
+      registrarAuditoria(`Cambió prioridad de requerimiento a ${nuevaPrioridad}`, updated.title);
+      showToast('success', `✅ Prioridad cambiada a "${nuevaPrioridad}".`);
+    } catch {
+      showToast('error', '❌ Error al cambiar la prioridad.');
     }
   };
 
@@ -1237,7 +1350,10 @@ function App() {
     if (userRole === 'admin') return projectAreas;
     const uid = auth.currentUser?.uid;
     if (!uid) return [];
-    return projectAreas.filter(area => area.colaboradores && area.colaboradores.includes(uid));
+    return projectAreas.filter(area => 
+      (area.colaboradores && area.colaboradores.includes(uid)) ||
+      (area.lectores && area.lectores.some(l => l.uid === uid && l.activo))
+    );
   };
 
   // Filtrado real se hace al cargar — pero para la vista de lista necesitamos una versión
@@ -1259,8 +1375,11 @@ function App() {
           const areasSnap = await getDocs(collection(db, 'proyectos', p.id, 'areas'));
           let isAssigned = false;
           areasSnap.forEach(aDoc => {
-            const data = aDoc.data();
+            const data = aDoc.data() as Area;
             if (data.colaboradores && data.colaboradores.includes(uid)) {
+              isAssigned = true;
+            }
+            if (data.lectores && data.lectores.some(l => l.uid === uid && l.activo)) {
               isAssigned = true;
             }
           });
@@ -2275,52 +2394,102 @@ function App() {
               </div>
             ) : (
               <div className="area-list">
-                {getAreasVisibles().map(area => (
-                  <div key={area.id} className="area-card">
-                    <div className="area-card-header">
-                      <div className="area-card-title">
-                        <MapPin size={18} />
-                        {area.nombre}
-                      </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        {userRole === 'admin' && (
-                          <>
+                {getAreasVisibles().map(area => {
+                  const isExpanded = expandedAreas.has(area.id);
+                  const toggleExpand = () => {
+                    setExpandedAreas(prev => {
+                      const newSet = new Set(prev);
+                      if (newSet.has(area.id)) newSet.delete(area.id);
+                      else newSet.add(area.id);
+                      return newSet;
+                    });
+                  };
+                  return (
+                    <div key={area.id} className="area-card" style={{ cursor: 'pointer' }} onClick={toggleExpand}>
+                      <div className="area-card-header">
+                        <div className="area-card-title">
+                          <MapPin size={18} />
+                          {area.nombre}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
+                          {(userRole === 'admin' || userRole === 'colaborador') && (
                             <button
                               className="btn-icon primary"
-                              onClick={() => openAssignModal(area.id, area.colaboradores || [])}
-                              title="Asignar colaboradores"
+                              onClick={() => openAddReaderAreaModal(area.id)}
+                              title="Añadir Lector"
                               style={{ width: 34, height: 34 }}
                             >
                               <UserPlus size={16} />
                             </button>
-                            <button
-                              className="btn-icon danger"
-                              onClick={() => eliminarArea(selectedProject.id, area.id, area.nombre)}
-                              title="Eliminar área"
-                              style={{ width: 34, height: 34 }}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        )}
+                          )}
+                          {userRole === 'admin' && (
+                            <>
+                              <button
+                                className="btn-icon primary"
+                                onClick={() => openAssignModal(area.id, area.colaboradores || [])}
+                                title="Asignar colaboradores"
+                                style={{ width: 34, height: 34 }}
+                              >
+                                <UserPlus size={16} />
+                              </button>
+                              <button
+                                className="btn-icon danger"
+                                onClick={() => eliminarArea(selectedProject.id, area.id, area.nombre)}
+                                title="Eliminar área"
+                                style={{ width: 34, height: 34 }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      {(!area.colaboradores || area.colaboradores.length === 0) ? (
-                        <p className="empty-collaborators">Sin colaboradores asignados</p>
-                      ) : (
-                        <div className="collaborator-chips">
-                          {area.colaboradores.map(uid => (
-                            <span key={uid} className="collaborator-chip">
-                              <User size={12} />
-                              {getNombreUsuario(uid)}
-                            </span>
-                          ))}
+                      
+                      {isExpanded && (
+                        <div onClick={e => e.stopPropagation()} style={{ marginTop: 10 }}>
+                          <h5 style={{ fontSize: 13, marginBottom: 5 }}>Colaboradores:</h5>
+                          {(!area.colaboradores || area.colaboradores.length === 0) ? (
+                            <p className="empty-collaborators" style={{ marginTop: 0 }}>Sin colaboradores asignados</p>
+                          ) : (
+                            <div className="collaborator-chips">
+                              {area.colaboradores.map(uid => (
+                                <span key={uid} className="collaborator-chip">
+                                  <User size={12} />
+                                  {getNombreUsuario(uid)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <h5 style={{ fontSize: 13, marginTop: 15, marginBottom: 5 }}>Lectores:</h5>
+                          {(!area.lectores || area.lectores.length === 0) ? (
+                            <p className="empty-collaborators" style={{ marginTop: 0 }}>Sin lectores asignados</p>
+                          ) : (
+                            <div className="collaborator-chips">
+                              {area.lectores.map(l => (
+                                <div key={l.uid} className="collaborator-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: l.activo ? 1 : 0.5 }}>
+                                  <User size={12} />
+                                  {getNombreUsuario(l.uid)}
+                                  {(userRole === 'admin' || userRole === 'colaborador') && (
+                                    <input 
+                                      type="checkbox" 
+                                      checked={l.activo} 
+                                      onChange={() => toggleLectorAreaActivo(area.id, l.uid, l.activo)} 
+                                      title={l.activo ? 'Desactivar lector' : 'Activar lector'}
+                                    />
+                                  )}
+                                  {userRole === 'admin' && (
+                                    <Trash2 size={12} style={{ cursor: 'pointer', color: 'var(--accent-red)' }} onClick={() => eliminarLectorArea(area.id, l.uid)} />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -2478,7 +2647,7 @@ function App() {
             </div>
 
             {/* Crear requerimiento */}
-            {userRole !== 'lector' && (
+            {userRole === 'admin' && (
               <>
                 {!showCreateRequirement ? (
                   <button className="btn-create" onClick={() => setShowCreateRequirement(true)} style={{ marginBottom: 20 }}>
@@ -2521,6 +2690,17 @@ function App() {
                           <option value="Alta">Alta</option>
                           <option value="Media">Media</option>
                           <option value="Baja">Baja</option>
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Área <span className="required-badge">Obligatorio</span></label>
+                        <select
+                          value={newReqAreaId}
+                          onChange={(e) => setNewReqAreaId(e.target.value)}
+                          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '14px', fontFamily: 'inherit' }}
+                        >
+                          <option value="">Seleccionar área...</option>
+                          {projectAreas.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
                         </select>
                       </div>
                     </div>
@@ -2691,15 +2871,74 @@ function App() {
                     ))}
                   </div>
                   {userRole === 'admin' && (
-                    <button
-                      className="btn-icon danger"
-                      onClick={() => eliminarRequerimiento(selectedRequirement.id)}
-                      title="Eliminar requerimiento"
-                      style={{ width: 36, height: 36, marginTop: 8 }}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <>
+                      <div style={{ marginTop: 16 }}>
+                        <label style={{ color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Cambiar Prioridad</label>
+                        <div className="req-status-buttons" style={{ marginTop: 6 }}>
+                          {['Alta', 'Media', 'Baja'].map(pr => (
+                            <button
+                              key={pr}
+                              className={`req-status-btn ${selectedRequirement.priority === pr ? 'active' : ''}`}
+                              onClick={() => actualizarPrioridadReq(selectedRequirement.id, pr)}
+                              style={{
+                                borderColor: selectedRequirement.priority === pr ? getPriorityColor(pr) : 'var(--border-subtle)',
+                                color: selectedRequirement.priority === pr ? getPriorityColor(pr) : 'var(--text-secondary)',
+                                background: selectedRequirement.priority === pr ? `${getPriorityColor(pr)}15` : 'var(--bg-input)',
+                                padding: '6px 12px',
+                                fontSize: '12px'
+                              }}
+                            >
+                              {pr}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        className="btn-icon danger"
+                        onClick={() => eliminarRequerimiento(selectedRequirement.id)}
+                        title="Eliminar requerimiento"
+                        style={{ width: 36, height: 36, marginTop: 16 }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* Equipo asignado */}
+            <div className="section-divider" style={{ marginTop: '32px' }}>
+              <h3><User size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} />Equipo Asignado</h3>
+            </div>
+            <div style={{ background: 'var(--bg-glass)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '16px' }}>
+              <h5 style={{ fontSize: 13, marginBottom: 5 }}>Colaboradores:</h5>
+              {(!selectedRequirement.colaboradores || selectedRequirement.colaboradores.length === 0) ? (
+                <p className="empty-collaborators" style={{ marginTop: 0 }}>Sin colaboradores asignados</p>
+              ) : (
+                <div className="collaborator-chips">
+                  {selectedRequirement.colaboradores.map(uid => (
+                    <span key={uid} className="collaborator-chip">
+                      <User size={12} />
+                      {getNombreUsuario(uid)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <h5 style={{ fontSize: 13, marginTop: 15, marginBottom: 5 }}>Lectores:</h5>
+              {(!selectedRequirement.lectores || selectedRequirement.lectores.length === 0) ? (
+                <p className="empty-collaborators" style={{ marginTop: 0 }}>Sin lectores asignados</p>
+              ) : (
+                <div className="collaborator-chips">
+                  {selectedRequirement.lectores.map(l => (
+                    <div key={l.uid} className="collaborator-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: l.activo ? 1 : 0.5 }}>
+                      <User size={12} />
+                      {getNombreUsuario(l.uid)}
+                      {/* Aquí se podría agregar el toggle individual para el requerimiento si se desea */}
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{l.activo ? 'Activo' : 'Desactivado'}</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -2710,7 +2949,7 @@ function App() {
             </div>
 
             {/* Input de comentario */}
-            {userRole !== 'lector' && (
+            {true && (
               <div className="comment-input-area">
                 <div className="comment-avatar">
                   <User size={16} />
@@ -2809,6 +3048,53 @@ function App() {
             <div className="modal-actions">
               <button className="btn-cancel" onClick={() => setShowAssignModal(false)}>Cancelar</button>
               <button className="btn-create" onClick={guardarAsignacion}>
+                <Save size={14} /> Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MODAL: AÑADIR LECTOR A ÁREA */}
+      {showAddReaderModal && (
+        <div className="modal-overlay" onClick={() => setShowAddReaderModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Añadir Lector al Área</h3>
+            <div className="user-checkbox-list">
+              {usersList
+                .filter(u => u.rol === 'lector' && u.activo !== false)
+                .map(u => (
+                  <label key={u.id} className="user-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedReaders.includes(u.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedReaders(prev => [...prev, u.id]);
+                        } else {
+                          setSelectedReaders(prev => prev.filter(id => id !== u.id));
+                        }
+                      }}
+                    />
+                    <div className="user-info">
+                      <div className="name">
+                        {u.nombre || 'Sin nombre'} 
+                        <span style={{ fontSize: '11px', marginLeft: 6, color: 'var(--text-muted)' }}>
+                          ({u.rol})
+                        </span>
+                      </div>
+                      <div className="email">{u.correo || u.email}</div>
+                    </div>
+                  </label>
+                ))}
+              {usersList.filter(u => u.rol === 'lector' && u.activo !== false).length === 0 && (
+                <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
+                  No hay lectores activos disponibles para asignar.
+                </p>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setShowAddReaderModal(false)}>Cancelar</button>
+              <button className="btn-create" onClick={guardarLectoresArea}>
                 <Save size={14} /> Guardar
               </button>
             </div>

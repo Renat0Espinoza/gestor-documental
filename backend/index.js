@@ -225,9 +225,12 @@ app.get('/api/requirements', (_req, res) => {
 // Crear un requerimiento
 app.post('/api/requirements', (req, res) => {
     try {
-        const { title, description, priority, proyectoId, createdBy } = req.body;
+        const { title, description, priority, proyectoId, areaId, colaboradores, lectores, createdBy } = req.body;
         if (!title || !title.trim()) {
             return res.status(400).json({ error: 'El título es obligatorio' });
+        }
+        if (!areaId) {
+            return res.status(400).json({ error: 'El área es obligatoria' });
         }
         const reqs = loadRequirements();
         const newReq = {
@@ -236,6 +239,9 @@ app.post('/api/requirements', (req, res) => {
             description: (description || '').trim(),
             priority: priority || 'Media',
             proyectoId: proyectoId || '',
+            areaId: areaId || '',
+            colaboradores: colaboradores || [],
+            lectores: lectores || [],
             createdBy: createdBy || '',
             status: 'Abierto',
             comments: [],
@@ -274,6 +280,55 @@ app.patch('/api/requirements/:id/status', (req, res) => {
     } catch (err) {
         console.error('Error al actualizar estado:', err);
         res.status(500).json({ error: 'Error al actualizar el estado' });
+    }
+});
+
+// Actualizar prioridad de un requerimiento
+app.patch('/api/requirements/:id/priority', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { priority } = req.body;
+        const validPriorities = ['Alta', 'Media', 'Baja'];
+        if (!validPriorities.includes(priority)) {
+            return res.status(400).json({ error: `Prioridad inválida. Valores permitidos: ${validPriorities.join(', ')}` });
+        }
+        const reqs = loadRequirements();
+        const idx = reqs.findIndex(r => r.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Requerimiento no encontrado' });
+        }
+        reqs[idx].priority = priority;
+        reqs[idx].updatedAt = new Date().toISOString();
+        saveRequirements(reqs);
+        console.log(`📝 Requerimiento ${id} prioridad → ${priority}`);
+        res.json(reqs[idx]);
+    } catch (err) {
+        console.error('Error al actualizar prioridad:', err);
+        res.status(500).json({ error: 'Error al actualizar la prioridad' });
+    }
+});
+
+// Actualizar lectores de un requerimiento
+app.patch('/api/requirements/:id/lectores', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { lectores } = req.body;
+        if (!Array.isArray(lectores)) {
+            return res.status(400).json({ error: 'Lectores debe ser un arreglo' });
+        }
+        const reqs = loadRequirements();
+        const idx = reqs.findIndex(r => r.id === id);
+        if (idx === -1) {
+            return res.status(404).json({ error: 'Requerimiento no encontrado' });
+        }
+        reqs[idx].lectores = lectores;
+        reqs[idx].updatedAt = new Date().toISOString();
+        saveRequirements(reqs);
+        console.log(`👥 Requerimiento ${id} lectores actualizados`);
+        res.json(reqs[idx]);
+    } catch (err) {
+        console.error('Error al actualizar lectores:', err);
+        res.status(500).json({ error: 'Error al actualizar lectores' });
     }
 });
 
