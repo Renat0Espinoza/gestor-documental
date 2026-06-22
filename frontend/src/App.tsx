@@ -2165,7 +2165,7 @@ function App() {
             </div>
 
             {/* Gráfico de Requerimientos por Estado */}
-            {userRole === 'admin' && requirements.length > 0 && (() => {
+            {userRole === 'admin' && (() => {
               const abiertos = requirements.filter(r => r.status === 'Abierto').length;
               const enProgreso = requirements.filter(r => r.status === 'En Progreso').length;
               const cerrados = requirements.filter(r => r.status === 'Cerrado').length;
@@ -2200,8 +2200,8 @@ function App() {
                           strokeWidth={strokeWidth}
                         />
                         {/* Data segments */}
-                        {segments.map((seg, i) => {
-                          const segmentLength = total > 0 ? (seg.count / total) * circumference : 0;
+                        {total > 0 && segments.map((seg, i) => {
+                          const segmentLength = (seg.count / total) * circumference;
                           const offset = accumulatedOffset;
                           accumulatedOffset += segmentLength;
                           if (seg.count === 0) return null;
@@ -2228,7 +2228,7 @@ function App() {
                       </svg>
                       <div className="req-chart-center-label">
                         <span className="req-chart-center-number">{total}</span>
-                        <span className="req-chart-center-text">Requerimientos</span>
+                        <span className="req-chart-center-text">{total === 0 ? 'Sin datos' : 'Requerimientos'}</span>
                       </div>
                     </div>
                     <div className="req-chart-legend">
