@@ -189,6 +189,7 @@ function App() {
   // --- Proyecto Detalle ---
   const [selectedProject, setSelectedProject] = useState<Proyecto | null>(null);
   const [projectAreas, setProjectAreas] = useState<Area[]>([]);
+  const [allAreas, setAllAreas] = useState<Area[]>([]);
   const [newAreaName, setNewAreaName] = useState('');
 
   // --- Modal Asignar Usuarios a Área ---
@@ -1049,6 +1050,19 @@ function App() {
     }
   };
 
+  const cargarTodasAreas = async () => {
+    try {
+      const areas: Area[] = [];
+      for (const p of proyectos) {
+        const snap = await getDocs(collection(db, 'proyectos', p.id, 'areas'));
+        snap.forEach(d => areas.push({ id: d.id, ...d.data(), proyectoId: p.id } as Area));
+      }
+      setAllAreas(areas);
+    } catch (err) {
+      console.error('Error cargando todas las áreas:', err);
+    }
+  };
+
   const crearArea = async (proyectoId: string) => {
     if (!newAreaName.trim()) return;
     try {
@@ -1172,6 +1186,7 @@ function App() {
     await cargarProyectos();
     await cargarCategorias();
     await cargarRequerimientos();
+    await cargarTodasAreas();
     const snap = await getDocs(collection(db, 'categorias'));
     const cats: Categoria[] = [];
     snap.forEach(d => cats.push({ id: d.id, ...d.data() } as Categoria));
@@ -2180,6 +2195,30 @@ function App() {
                 { label: 'Cerrados', count: cerrados, color: '#f87171', bgColor: 'rgba(248, 113, 113, 0.12)' },
               ];
 
+              // Agrupar requerimientos por área
+              const areaMap = new Map<string, { name: string; projectName: string; abiertos: number; enProgreso: number; cerrados: number; total: number }>();
+              requirements.forEach(req => {
+                const areaId = req.areaId || 'sin-area';
+                const area = allAreas.find(a => a.id === areaId);
+                const proyecto = proyectos.find(p => p.id === req.proyectoId);
+                if (!areaMap.has(areaId)) {
+                  areaMap.set(areaId, {
+                    name: area?.nombre || 'Sin área',
+                    projectName: proyecto?.nombre || '—',
+                    abiertos: 0,
+                    enProgreso: 0,
+                    cerrados: 0,
+                    total: 0
+                  });
+                }
+                const entry = areaMap.get(areaId)!;
+                entry.total++;
+                if (req.status === 'Abierto') entry.abiertos++;
+                else if (req.status === 'En Progreso') entry.enProgreso++;
+                else if (req.status === 'Cerrado') entry.cerrados++;
+              });
+              const areaBreakdown = Array.from(areaMap.values()).sort((a, b) => b.total - a.total);
+
               let accumulatedOffset = 0;
 
               return (
@@ -2244,6 +2283,42 @@ function App() {
                       ))}
                     </div>
                   </div>
+
+                  {/* Desglose por Áreas */}
+                  {areaBreakdown.length > 0 && (
+                    <div className="req-chart-areas">
+                      <div className="req-chart-areas-header">
+                        <MapPin size={14} />
+                        <span>Desglose por Área</span>
+                      </div>
+                      <div className="req-chart-areas-table">
+                        <div className="req-chart-areas-row req-chart-areas-row-header">
+                          <span className="req-chart-area-name">Área</span>
+                          <span className="req-chart-area-project">Proyecto</span>
+                          <span className="req-chart-area-stat" style={{ color: '#34d399' }}>Abiertos</span>
+                          <span className="req-chart-area-stat" style={{ color: '#fbbf24' }}>En Prog.</span>
+                          <span className="req-chart-area-stat" style={{ color: '#f87171' }}>Cerrados</span>
+                          <span className="req-chart-area-stat-total">Total</span>
+                        </div>
+                        {areaBreakdown.map((area, i) => (
+                          <div key={i} className="req-chart-areas-row" style={{ animationDelay: `${0.3 + i * 0.08}s` }}>
+                            <span className="req-chart-area-name">
+                              <MapPin size={12} style={{ opacity: 0.5 }} />
+                              {area.name}
+                            </span>
+                            <span className="req-chart-area-project">
+                              <Briefcase size={11} style={{ opacity: 0.4 }} />
+                              {area.projectName}
+                            </span>
+                            <span className="req-chart-area-stat" style={{ color: '#34d399' }}>{area.abiertos}</span>
+                            <span className="req-chart-area-stat" style={{ color: '#fbbf24' }}>{area.enProgreso}</span>
+                            <span className="req-chart-area-stat" style={{ color: '#f87171' }}>{area.cerrados}</span>
+                            <span className="req-chart-area-stat-total">{area.total}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}
