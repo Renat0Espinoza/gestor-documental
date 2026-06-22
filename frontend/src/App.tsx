@@ -1088,10 +1088,11 @@ function App() {
     );
   };
 
-  // ===== ASIGNAR COLABORADORES =====
-  const openAssignModal = (areaId: string, currentCollabs: string[]) => {
+  // ===== ASIGNAR USUARIOS AL ÁREA =====
+  const openAssignModal = (areaId: string, currentCollabs: string[], currentReaders: AreaLector[]) => {
     setAssignAreaId(areaId);
     setSelectedCollaborators([...currentCollabs]);
+    setSelectedReaders(currentReaders.map(l => l.uid));
     cargarUsuarios();
     setShowAssignModal(true);
   };
@@ -1099,51 +1100,31 @@ function App() {
   const guardarAsignacion = async () => {
     if (!selectedProject || !assignAreaId) return;
     try {
-      await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', assignAreaId), {
-        colaboradores: selectedCollaborators
+      const area = projectAreas.find(a => a.id === assignAreaId);
+      if (!area) return;
+
+      const currentLectores = area.lectores || [];
+      const newLectoresList: AreaLector[] = selectedReaders.map(uid => {
+        const existing = currentLectores.find(l => l.uid === uid);
+        return existing ? existing : { uid, activo: true };
       });
+
+      const updates: any = {};
+      if (userRole === 'admin') {
+        updates.colaboradores = selectedCollaborators;
+      }
+      updates.lectores = newLectoresList;
+
+      await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', assignAreaId), updates);
+      
       setShowAssignModal(false);
       setAssignAreaId(null);
       setSelectedCollaborators([]);
-      cargarAreas(selectedProject.id);
-      showToast('success', '✅ Colaboradores asignados correctamente.');
-    } catch {
-      showToast('error', '❌ Error al asignar colaboradores.');
-    }
-  };
-
-  // --- Asignar Lectores a Área ---
-  const openAddReaderAreaModal = (areaId: string) => {
-    setAddReaderAreaId(areaId);
-    setSelectedReaders([]);
-    cargarUsuarios();
-    setShowAddReaderModal(true);
-  };
-
-  const guardarLectoresArea = async () => {
-    if (!selectedProject || !addReaderAreaId) return;
-    try {
-      const area = projectAreas.find(a => a.id === addReaderAreaId);
-      if (!area) return;
-      const currentLectores = area.lectores || [];
-      const newLectores = selectedReaders.map(uid => ({ uid, activo: true }));
-      
-      const combined = [...currentLectores];
-      for (const nl of newLectores) {
-        if (!combined.some(c => c.uid === nl.uid)) {
-          combined.push(nl);
-        }
-      }
-      await updateDoc(doc(db, 'proyectos', selectedProject.id, 'areas', addReaderAreaId), {
-        lectores: combined
-      });
-      setShowAddReaderModal(false);
-      setAddReaderAreaId(null);
       setSelectedReaders([]);
       cargarAreas(selectedProject.id);
-      showToast('success', '✅ Lectores añadidos al área.');
+      showToast('success', '✅ Usuarios asignados correctamente.');
     } catch {
-      showToast('error', '❌ Error al añadir lectores.');
+      showToast('error', '❌ Error al asignar usuarios.');
     }
   };
 
@@ -3007,95 +2988,75 @@ function App() {
         )}
       </main>
 
-      {/* MODAL: ASIGNAR COLABORADORES / LECTORES */}
+      {/* MODAL: ASIGNAR USUARIOS AL ÁREA */}
       {showAssignModal && (
         <div className="modal-overlay" onClick={() => setShowAssignModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
             <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Asignar Usuarios al Área</h3>
-            <div className="user-checkbox-list">
-              {usersList
-                .filter(u => (u.rol === 'colaborador' || u.rol === 'lector') && u.activo !== false)
-                .map(u => (
-                  <label key={u.id} className="user-checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={selectedCollaborators.includes(u.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedCollaborators(prev => [...prev, u.id]);
-                        } else {
-                          setSelectedCollaborators(prev => prev.filter(id => id !== u.id));
-                        }
-                      }}
-                    />
-                    <div className="user-info">
-                      <div className="name">
-                        {u.nombre || 'Sin nombre'} 
-                        <span style={{ fontSize: '11px', marginLeft: 6, color: u.rol === 'colaborador' ? 'var(--accent-green)' : 'var(--text-muted)' }}>
-                          ({u.rol})
-                        </span>
-                      </div>
-                      <div className="email">{u.correo || u.email}</div>
-                    </div>
-                  </label>
-                ))}
-              {usersList.filter(u => (u.rol === 'colaborador' || u.rol === 'lector') && u.activo !== false).length === 0 && (
-                <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
-                  No hay usuarios activos disponibles para asignar.
-                </p>
-              )}
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 20 }}>
+              {/* Columna Colaboradores */}
+              <div>
+                <h4 style={{ marginBottom: 12, fontSize: 14, color: 'var(--text-secondary)' }}>Colaboradores</h4>
+                <div className="user-checkbox-list" style={{ maxHeight: 300 }}>
+                  {usersList
+                    .filter(u => u.rol === 'colaborador' && u.activo !== false)
+                    .map(u => (
+                      <label key={u.id} className="user-checkbox-item" style={{ opacity: userRole === 'admin' ? 1 : 0.5 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedCollaborators.includes(u.id)}
+                          disabled={userRole !== 'admin'}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedCollaborators(prev => [...prev, u.id]);
+                            else setSelectedCollaborators(prev => prev.filter(id => id !== u.id));
+                          }}
+                        />
+                        <div className="user-info">
+                          <div className="name">{u.nombre || 'Sin nombre'}</div>
+                          <div className="email">{u.correo || u.email}</div>
+                        </div>
+                      </label>
+                    ))}
+                  {usersList.filter(u => u.rol === 'colaborador' && u.activo !== false).length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No hay colaboradores disponibles.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Columna Lectores */}
+              <div>
+                <h4 style={{ marginBottom: 12, fontSize: 14, color: 'var(--text-secondary)' }}>Lectores</h4>
+                <div className="user-checkbox-list" style={{ maxHeight: 300 }}>
+                  {usersList
+                    .filter(u => u.rol === 'lector' && u.activo !== false)
+                    .map(u => (
+                      <label key={u.id} className="user-checkbox-item">
+                        <input
+                          type="checkbox"
+                          checked={selectedReaders.includes(u.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedReaders(prev => [...prev, u.id]);
+                            else setSelectedReaders(prev => prev.filter(id => id !== u.id));
+                          }}
+                        />
+                        <div className="user-info">
+                          <div className="name">{u.nombre || 'Sin nombre'}</div>
+                          <div className="email">{u.correo || u.email}</div>
+                        </div>
+                      </label>
+                    ))}
+                  {usersList.filter(u => u.rol === 'lector' && u.activo !== false).length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No hay lectores disponibles.</p>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="modal-actions">
+
+            <div className="modal-actions" style={{ marginTop: 24 }}>
               <button className="btn-cancel" onClick={() => setShowAssignModal(false)}>Cancelar</button>
               <button className="btn-create" onClick={guardarAsignacion}>
-                <Save size={14} /> Guardar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* MODAL: AÑADIR LECTOR A ÁREA */}
-      {showAddReaderModal && (
-        <div className="modal-overlay" onClick={() => setShowAddReaderModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Añadir Lector al Área</h3>
-            <div className="user-checkbox-list">
-              {usersList
-                .filter(u => u.rol === 'lector' && u.activo !== false)
-                .map(u => (
-                  <label key={u.id} className="user-checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={selectedReaders.includes(u.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedReaders(prev => [...prev, u.id]);
-                        } else {
-                          setSelectedReaders(prev => prev.filter(id => id !== u.id));
-                        }
-                      }}
-                    />
-                    <div className="user-info">
-                      <div className="name">
-                        {u.nombre || 'Sin nombre'} 
-                        <span style={{ fontSize: '11px', marginLeft: 6, color: 'var(--text-muted)' }}>
-                          ({u.rol})
-                        </span>
-                      </div>
-                      <div className="email">{u.correo || u.email}</div>
-                    </div>
-                  </label>
-                ))}
-              {usersList.filter(u => u.rol === 'lector' && u.activo !== false).length === 0 && (
-                <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
-                  No hay lectores activos disponibles para asignar.
-                </p>
-              )}
-            </div>
-            <div className="modal-actions">
-              <button className="btn-cancel" onClick={() => setShowAddReaderModal(false)}>Cancelar</button>
-              <button className="btn-create" onClick={guardarLectoresArea}>
-                <Save size={14} /> Guardar
+                <Save size={14} /> Guardar Cambios
               </button>
             </div>
           </div>

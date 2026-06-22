@@ -60,6 +60,11 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+select option {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
 /* ===== ANIMATIONS ===== */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(12px); }
