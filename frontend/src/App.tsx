@@ -191,14 +191,10 @@ function App() {
   const [projectAreas, setProjectAreas] = useState<Area[]>([]);
   const [newAreaName, setNewAreaName] = useState('');
 
-  // --- Modal Asignar Colaboradores ---
+  // --- Modal Asignar Usuarios a Área ---
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignAreaId, setAssignAreaId] = useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = useState<string[]>([]);
-
-  // --- Modal Asignar Lectores ---
-  const [showAddReaderModal, setShowAddReaderModal] = useState(false);
-  const [addReaderAreaId, setAddReaderAreaId] = useState<string | null>(null);
   const [selectedReaders, setSelectedReaders] = useState<string[]>([]);
   const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
 
@@ -2396,32 +2392,22 @@ function App() {
                           {(userRole === 'admin' || userRole === 'colaborador') && (
                             <button
                               className="btn-icon primary"
-                              onClick={() => openAddReaderAreaModal(area.id)}
-                              title="Añadir Lector"
+                              onClick={() => openAssignModal(area.id, area.colaboradores || [], area.lectores || [])}
+                              title="Asignar Usuarios"
                               style={{ width: 34, height: 34 }}
                             >
                               <UserPlus size={16} />
                             </button>
                           )}
                           {userRole === 'admin' && (
-                            <>
-                              <button
-                                className="btn-icon primary"
-                                onClick={() => openAssignModal(area.id, area.colaboradores || [])}
-                                title="Asignar colaboradores"
-                                style={{ width: 34, height: 34 }}
-                              >
-                                <UserPlus size={16} />
-                              </button>
-                              <button
-                                className="btn-icon danger"
-                                onClick={() => eliminarArea(selectedProject.id, area.id, area.nombre)}
-                                title="Eliminar área"
-                                style={{ width: 34, height: 34 }}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </>
+                            <button
+                              className="btn-icon danger"
+                              onClick={() => eliminarArea(selectedProject.id, area.id, area.nombre)}
+                              title="Eliminar área"
+                              style={{ width: 34, height: 34 }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           )}
                         </div>
                       </div>
