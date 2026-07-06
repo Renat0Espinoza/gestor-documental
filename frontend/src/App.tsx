@@ -3082,14 +3082,14 @@ function App() {
               </button>
             )}
 
-            {listaArchivos.filter(f => f.proyectoId === selectedProject.id).length === 0 ? (
+            {listaArchivos.filter(f => f.proyectoId === selectedProject.id && f.estado !== 'papelera').length === 0 ? (
               <div className="empty-state" style={{ padding: '20px' }}>
                 <Inbox size={40} />
                 <p>No hay documentos asociados a este proyecto.</p>
               </div>
             ) : (
               <div style={{ background: 'var(--bg-glass)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '16px' }}>
-                {renderFileList(listaArchivos.filter(f => f.proyectoId === selectedProject.id))}
+                {renderFileList(listaArchivos.filter(f => f.proyectoId === selectedProject.id && f.estado !== 'papelera'))}
               </div>
             )}
           </div>
