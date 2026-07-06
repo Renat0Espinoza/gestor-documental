@@ -7,7 +7,7 @@ import {
   Filter, Users, History, Shield, Eye, Phone, Loader2,
   Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
   UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle, Info,
-  ClipboardList, MessageSquare, Send, Clock, Circle, X
+  ClipboardList, MessageSquare, Send, Clock, Circle, X, Menu, Home
 } from 'lucide-react';
 import Login from './pages/Login';
 import { auth, db } from './services/firebase';
@@ -217,6 +217,9 @@ function App() {
 
   // --- Previsualización de PDF ---
   const [previewFile, setPreviewFile] = useState<string | null>(null);
+
+  // --- Sidebar móvil ---
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // --- Subida múltiple ---
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; uploading: boolean }>({ current: 0, total: 0, uploading: false });
@@ -1639,14 +1642,162 @@ function App() {
     );
   }
 
+  const showSidebar = vistaActual !== 'dashboard';
+
+  // Navegación del sidebar: navegar y cerrar sidebar móvil
+  const sidebarNavigate = (vista: Vista, action?: () => void) => {
+    setSidebarOpen(false);
+    if (action) {
+      action();
+    } else {
+      setVistaActual(vista);
+    }
+  };
+
+  // Sidebar component
+  const renderSidebar = () => (
+    <aside className={`app-sidebar${sidebarOpen ? ' mobile-open' : ''}`}>
+      {/* Botón Inicio */}
+      <button
+        className="sidebar-home-btn"
+        onClick={() => sidebarNavigate('dashboard')}
+      >
+        <Home size={16} /> Inicio
+      </button>
+      <div className="sidebar-divider" />
+
+      {/* Gestión */}
+      <div className="sidebar-section">
+        <div className="sidebar-section-label">
+          <Briefcase size={10} /> Gestión
+        </div>
+        <button
+          className={`sidebar-item${vistaActual === 'proyectos' || vistaActual === 'proyecto-detalle' ? ' active' : ''}`}
+          onClick={() => sidebarNavigate('proyectos', abrirProyectos)}
+          style={{ animationDelay: '0.04s' }}
+        >
+          <Briefcase size={18} /> Proyectos
+        </button>
+        {userRole === 'admin' && (
+          <button
+            className={`sidebar-item${vistaActual === 'categorias' ? ' active' : ''}`}
+            onClick={() => sidebarNavigate('categorias', abrirCategorias)}
+            style={{ animationDelay: '0.08s' }}
+          >
+            <Layers size={18} /> Categorías
+          </button>
+        )}
+      </div>
+
+      {/* Documentos */}
+      <div className="sidebar-section">
+        <div className="sidebar-section-label">
+          <FileText size={10} /> Documentos
+        </div>
+        <button
+          className={`sidebar-item${vistaActual === 'explorador' ? ' active' : ''}`}
+          onClick={() => sidebarNavigate('explorador', abrirExplorador)}
+          style={{ animationDelay: '0.12s' }}
+        >
+          <FolderOpen size={18} /> Explorar Archivos
+        </button>
+        <button
+          className={`sidebar-item${vistaActual === 'busqueda' ? ' active' : ''}`}
+          onClick={() => sidebarNavigate('busqueda', abrirBusqueda)}
+          style={{ animationDelay: '0.16s' }}
+        >
+          <Search size={18} /> Buscar
+        </button>
+      </div>
+
+      {/* Administración (solo admin) */}
+      {userRole === 'admin' && (
+        <div className="sidebar-section">
+          <div className="sidebar-section-label">
+            <Shield size={10} /> Administración
+          </div>
+          <button
+            className={`sidebar-item${vistaActual === 'usuarios' ? ' active' : ''}`}
+            onClick={() => sidebarNavigate('usuarios', () => { cargarUsuarios(); setVistaActual('usuarios'); })}
+            style={{ animationDelay: '0.20s' }}
+          >
+            <Users size={18} /> Gestión Roles
+          </button>
+          <button
+            className={`sidebar-item${vistaActual === 'historial' ? ' active' : ''}`}
+            onClick={() => sidebarNavigate('historial', () => setVistaActual('historial'))}
+            style={{ animationDelay: '0.24s' }}
+          >
+            <History size={18} /> Auditoría
+          </button>
+          <button
+            className={`sidebar-item${vistaActual === 'papelera' ? ' active' : ''}`}
+            onClick={() => sidebarNavigate('papelera', () => { setVistaActual('papelera'); abrirExploradorContexto(); })}
+            style={{ animationDelay: '0.28s' }}
+          >
+            <Trash2 size={18} /> Papelera
+          </button>
+        </div>
+      )}
+
+      {/* Mi Cuenta */}
+      <div className="sidebar-section">
+        <div className="sidebar-section-label">
+          <User size={10} /> Mi Cuenta
+        </div>
+        <button
+          className={`sidebar-item${vistaActual === 'configuracion' ? ' active' : ''}`}
+          onClick={() => sidebarNavigate('configuracion', abrirConfiguracion)}
+          style={{ animationDelay: '0.32s' }}
+        >
+          <Settings size={18} /> Configuración
+        </button>
+      </div>
+
+      {/* Requerimientos (visible si hay proyecto seleccionado y estamos en contexto de reqs) */}
+      {selectedProject && (vistaActual === 'requerimientos' || vistaActual === 'requerimiento-detalle') && (
+        <div className="sidebar-section">
+          <div className="sidebar-section-label">
+            <ClipboardList size={10} /> Proyecto Actual
+          </div>
+          <button
+            className={`sidebar-item${vistaActual === 'proyecto-detalle' ? ' active' : ''}`}
+            onClick={() => sidebarNavigate('proyecto-detalle', () => abrirProyectoDetalle(selectedProject))}
+            style={{ animationDelay: '0.36s' }}
+          >
+            <Briefcase size={18} /> {selectedProject.nombre}
+          </button>
+          <button
+            className={`sidebar-item${vistaActual === 'requerimientos' ? ' active' : ''}`}
+            onClick={() => sidebarNavigate('requerimientos', () => { cargarRequerimientos(); setVistaActual('requerimientos'); })}
+            style={{ animationDelay: '0.40s' }}
+          >
+            <ClipboardList size={18} /> Requerimientos
+          </button>
+        </div>
+      )}
+    </aside>
+  );
+
   return (
     <div className="app-layout">
       {/* HEADER */}
       <header className="app-header">
-        <div>
-          <h1>Gestión Documental</h1>
-          <div className="header-sub">
-            {userRole === 'admin' ? 'Panel de Administración' : userRole === 'colaborador' ? 'Panel de Colaborador' : 'Panel de Lector'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {showSidebar && (
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              title="Menú de navegación"
+            >
+              <Menu size={20} />
+            </button>
+          )}
+          <div>
+            <h1>Gestión Documental</h1>
+            <div className="header-sub">
+              {userRole === 'admin' ? 'Panel de Administración' : userRole === 'colaborador' ? 'Panel de Colaborador' : 'Panel de Lector'}
+            </div>
           </div>
         </div>
         <button onClick={() => { setIsAuthenticated(false); signOut(auth); }} className="btn-logout" title="Cerrar Sesión">
@@ -1654,9 +1805,20 @@ function App() {
         </button>
       </header>
 
-      <main className="app-main">
-        {/* HIDDEN FILE INPUT */}
-        <input type="file" accept="application/pdf" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+      {/* Sidebar overlay for mobile */}
+      {showSidebar && (
+        <div
+          className={`sidebar-overlay${sidebarOpen ? ' visible' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+
+      <div className={showSidebar ? 'app-body-with-sidebar' : ''}>
+        {showSidebar && renderSidebar()}
+        <main className="app-main">
+          {/* HIDDEN FILE INPUT */}
+          <input type="file" accept="application/pdf" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
 
         {/* === DASHBOARD === */}
         {vistaActual === 'dashboard' && (
@@ -3179,7 +3341,8 @@ function App() {
             )}
           </div>
         )}
-      </main>
+        </main>
+      </div>
 
       {/* MODAL: ASIGNAR USUARIOS AL ÁREA */}
       {showAssignModal && (
