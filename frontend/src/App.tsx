@@ -3470,7 +3470,7 @@ function App() {
             </div>
             <div className="pdf-preview-body">
               <iframe
-                src={`${API_BASE}/api/files/${encodeURIComponent(previewFile)}`}
+                src={`${API_BASE}/api/files/${encodeURIComponent(previewFile)}?preview=true`}
                 title={`Previsualización: ${previewFile}`}
                 className="pdf-preview-iframe"
               />

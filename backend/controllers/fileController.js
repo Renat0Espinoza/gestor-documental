@@ -58,7 +58,7 @@ const searchFiles = (req, res) => {
     }
 };
 
-// 4. DESCARGAR ARCHIVO POR NOMBRE
+// 4. DESCARGAR / PREVISUALIZAR ARCHIVO POR NOMBRE
 const downloadFile = (req, res) => {
     const filePath = path.join(uploadsDir, req.params.filename);
 
@@ -69,6 +69,23 @@ const downloadFile = (req, res) => {
 
     if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Archivo no encontrado' });
+    }
+
+    // Si se solicita previsualización, enviar inline en vez de forzar descarga
+    if (req.query.preview === 'true') {
+        const ext = path.extname(req.params.filename).toLowerCase();
+        const mimeTypes = {
+            '.pdf': 'application/pdf',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.txt': 'text/plain',
+        };
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `inline; filename="${req.params.filename}"`);
+        return fs.createReadStream(filePath).pipe(res);
     }
 
     res.download(filePath);
