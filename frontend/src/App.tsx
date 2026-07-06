@@ -1761,7 +1761,7 @@ function App() {
             <ClipboardList size={10} /> Proyecto Actual
           </div>
           <button
-            className={`sidebar-item${vistaActual === 'proyecto-detalle' ? ' active' : ''}`}
+            className="sidebar-item"
             onClick={() => sidebarNavigate('proyecto-detalle', () => abrirProyectoDetalle(selectedProject))}
             style={{ animationDelay: '0.36s' }}
           >
