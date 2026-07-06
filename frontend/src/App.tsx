@@ -221,6 +221,9 @@ function App() {
   // --- Sidebar móvil ---
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // --- Selección múltiple ---
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+
   // --- Subida múltiple ---
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; uploading: boolean }>({ current: 0, total: 0, uploading: false });
 
@@ -324,6 +327,11 @@ function App() {
       }).catch(err => console.error("Error al cargar datos globales", err));
     }
   }, [isAuthenticated]);
+
+  // Resetear selección al cambiar de vista
+  useEffect(() => {
+    setSelectedFiles([]);
+  }, [vistaActual]);
 
   // ===== AUDITORÍA =====
   const registrarAuditoria = async (accion: string, documento: string) => {
@@ -812,6 +820,106 @@ function App() {
       'Eliminar Permanentemente',
       'Cancelar'
     );
+  };
+
+  // ===== ACCIONES EN LOTE =====
+  const handleBatchDelete = async (filenames: string[]) => {
+    if (userRole === 'lector') return;
+    if (filenames.length === 0) return;
+
+    showConfirm(
+      'Mover Seleccionados a Papelera',
+      `¿Estás seguro de que deseas enviar los ${filenames.length} archivos seleccionados a la papelera?`,
+      async () => {
+        try {
+          for (const filename of filenames) {
+            const archivo = listaArchivos.find(f => f.name === filename);
+            if (!archivo) continue;
+            if (!archivo.fsId) {
+              await addDoc(collection(db, 'documentos'), {
+                filename: archivo.name,
+                originalName: archivo.name,
+                size: archivo.size,
+                proyectoId: archivo.proyectoId || '',
+                subidoPor: auth.currentUser?.uid || '',
+                fechaCreacion: serverTimestamp(),
+                estado: 'papelera'
+              });
+            } else {
+              await updateDoc(doc(db, 'documentos', archivo.fsId), { estado: 'papelera' });
+            }
+            registrarAuditoria('Movió archivo a papelera', archivo.name);
+          }
+          showToast('success', `🗑️ ${filenames.length} archivos movidos a la papelera.`);
+          setSelectedFiles([]);
+          if (vistaActual === 'explorador') abrirExplorador();
+          else if (vistaActual === 'proyecto-detalle') abrirExploradorContexto();
+          else {
+            const response = await axios.get(`${API_BASE}/api/files`);
+            setListaArchivos(response.data);
+          }
+        } catch {
+          showToast('error', '❌ Error al mover archivos a la papelera.');
+        }
+      },
+      true,
+      'Mover a papelera',
+      'Cancelar'
+    );
+  };
+
+  const handleBatchRestore = async (filenames: string[]) => {
+    if (filenames.length === 0) return;
+    try {
+      for (const filename of filenames) {
+        const archivo = listaArchivos.find(f => f.name === filename);
+        if (archivo && archivo.fsId) {
+          await updateDoc(doc(db, 'documentos', archivo.fsId), { estado: 'activo' });
+          registrarAuditoria('Restauró archivo', archivo.name);
+        }
+      }
+      showToast('success', `♻️ ${filenames.length} archivos restaurados.`);
+      setSelectedFiles([]);
+      abrirExploradorContexto();
+    } catch {
+      showToast('error', '❌ Error al restaurar archivos.');
+    }
+  };
+
+  const handleBatchHardDelete = async (filenames: string[]) => {
+    if (filenames.length === 0) return;
+    showConfirm(
+      'Eliminar Permanentemente Seleccionados',
+      `⚠️ Esta acción es irreversible.\n¿Confirmas que deseas eliminar los ${filenames.length} archivos seleccionados permanentemente?`,
+      async () => {
+        try {
+          for (const filename of filenames) {
+            const archivo = listaArchivos.find(f => f.name === filename);
+            await axios.delete(`${API_BASE}/api/files/${encodeURIComponent(filename)}`);
+            if (archivo && archivo.fsId) {
+              await deleteDoc(doc(db, 'documentos', archivo.fsId));
+            }
+            registrarAuditoria('Eliminó archivo permanentemente', filename);
+          }
+          showToast('success', `🗑️ ${filenames.length} archivos eliminados permanentemente.`);
+          setSelectedFiles([]);
+          abrirExploradorContexto();
+        } catch {
+          showToast('error', '❌ Error al eliminar archivos.');
+        }
+      },
+      true,
+      'Eliminar Permanentemente',
+      'Cancelar'
+    );
+  };
+
+  const handleBatchDownload = (filenames: string[]) => {
+    filenames.forEach((filename, i) => {
+      setTimeout(() => {
+        handleDownload(filename);
+      }, i * 300);
+    });
   };
 
   // ===== USUARIOS =====
@@ -1435,64 +1543,191 @@ function App() {
   }, [proyectos, userRole]);
 
   // ===== COMPONENTE DE LISTA DE ARCHIVOS =====
-  const renderFileList = (files: FileInfo[]) => (
-    <div className="file-list">
-      {files.map((archivo, index) => {
-        const fileProject = proyectos.find(p => p.id === archivo.proyectoId);
-        
-        return (
-        <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
-          <div className="file-icon" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(archivo.name)}>
-            <FileText size={20} color="#f87171" />
-          </div>
-          <div className="file-info">
-            <div className="file-name" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(archivo.name)} title="Click para previsualizar">{archivo.name}</div>
-            <div className="file-meta">
-              {formatFileSize(archivo.size)}
-              {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
-              
-              {fileProject && (
-                <div style={{ marginTop: '4px', display: 'flex', gap: '8px' }}>
-                  <span className="project-meta-tag" style={{ fontSize: '10px', padding: '2px 8px' }}>
-                    <Briefcase size={10} /> {fileProject.nombre}
-                  </span>
-                  <span className="project-meta-tag" style={{ fontSize: '10px', padding: '2px 8px' }}>
-                    <Layers size={10} /> {getNombreCategoria(fileProject.categoriaId)}
-                  </span>
-                </div>
+  const renderFileList = (files: FileInfo[]) => {
+    const fileNamesInView = files.map(f => f.name);
+    const selectedInView = selectedFiles.filter(name => fileNamesInView.includes(name));
+    const allSelected = files.length > 0 && selectedInView.length === files.length;
+    const isIndeterminate = selectedInView.length > 0 && selectedInView.length < files.length;
+
+    const toggleSelectAll = () => {
+      if (allSelected) {
+        setSelectedFiles(prev => prev.filter(name => !fileNamesInView.includes(name)));
+      } else {
+        setSelectedFiles(prev => {
+          const otherSelected = prev.filter(name => !fileNamesInView.includes(name));
+          return [...otherSelected, ...fileNamesInView];
+        });
+      }
+    };
+
+    const toggleSelectFile = (fileName: string) => {
+      setSelectedFiles(prev => {
+        if (prev.includes(fileName)) {
+          return prev.filter(name => name !== fileName);
+        } else {
+          return [...prev, fileName];
+        }
+      });
+    };
+
+    return (
+      <div className="file-list-container">
+        {/* Barra superior de Selección y Acciones */}
+        {files.length > 0 && (
+          <div className="file-list-header">
+            <div className="file-list-header-left">
+              <label className="select-all-label">
+                <input
+                  type="checkbox"
+                  className="custom-file-checkbox"
+                  checked={allSelected}
+                  ref={el => {
+                    if (el) el.indeterminate = isIndeterminate;
+                  }}
+                  onChange={toggleSelectAll}
+                />
+                <span>Seleccionar todo</span>
+              </label>
+              {selectedFiles.length > 0 && (
+                <span className="batch-selection-info">
+                  {selectedFiles.length} seleccionado{selectedFiles.length > 1 ? 's' : ''}
+                </span>
               )}
             </div>
-          </div>
-          <div className="file-actions">
-            {vistaActual === 'papelera' ? (
-              <>
-                <button className="file-download" onClick={() => handleRestore(archivo)} style={{ color: '#34d399', border: '1px solid #34d399', background: 'rgba(52, 211, 153, 0.1)' }}>
-                  <RefreshCcw size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Restaurar
+
+            {selectedFiles.length > 0 && (
+              <div className="batch-actions-container">
+                <button
+                  className="btn-batch-action download"
+                  onClick={() => handleBatchDownload(selectedFiles)}
+                  title="Descargar seleccionados"
+                >
+                  <Download size={14} />
+                  <span>Descargar</span>
                 </button>
-                {userRole !== 'lector' && (
-                  <button className="file-delete" onClick={() => handleHardDelete(archivo)} title="Eliminar definitivamente">
-                    <Trash2 size={14} />
-                  </button>
+
+                {vistaActual === 'papelera' ? (
+                  <>
+                    <button
+                      className="btn-batch-action restore"
+                      onClick={() => handleBatchRestore(selectedFiles)}
+                      title="Restaurar seleccionados"
+                    >
+                      <RefreshCcw size={14} />
+                      <span>Restaurar</span>
+                    </button>
+                    {userRole === 'admin' && (
+                      <button
+                        className="btn-batch-action delete"
+                        onClick={() => handleBatchHardDelete(selectedFiles)}
+                        title="Eliminar permanentemente"
+                      >
+                        <Trash2 size={14} />
+                        <span>Eliminar permanentemente</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {userRole !== 'lector' && (
+                      <button
+                        className="btn-batch-action delete"
+                        onClick={() => handleBatchDelete(selectedFiles)}
+                        title="Mover seleccionados a la papelera"
+                      >
+                        <Trash2 size={14} />
+                        <span>Mover a papelera</span>
+                      </button>
+                    )}
+                  </>
                 )}
-              </>
-            ) : (
-              <>
-                <button className="file-download" onClick={() => handleDownload(archivo.name)}>
-                  <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-                  Descargar
+
+                <button
+                  className="btn-batch-action clear"
+                  onClick={() => setSelectedFiles([])}
+                  title="Limpiar selección"
+                >
+                  <X size={14} />
+                  <span>Deseleccionar</span>
                 </button>
-                {userRole !== 'lector' && (
-                  <button className="file-delete" onClick={() => handleDelete(archivo)} title="Mover a papelera">
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </>
+              </div>
             )}
           </div>
+        )}
+
+        <div className="file-list">
+          {files.map((archivo, index) => {
+            const fileProject = proyectos.find(p => p.id === archivo.proyectoId);
+            const isSelected = selectedFiles.includes(archivo.name);
+            
+            return (
+              <div
+                key={index}
+                className={`file-item${isSelected ? ' selected' : ''}`}
+                style={{ animationDelay: `${index * 0.05}s` }}
+              >
+                <div className="file-item-checkbox-wrapper">
+                  <input
+                    type="checkbox"
+                    className="custom-file-checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelectFile(archivo.name)}
+                  />
+                </div>
+                <div className="file-icon" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(archivo.name)}>
+                  <FileText size={20} color="#f87171" />
+                </div>
+                <div className="file-info">
+                  <div className="file-name" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(archivo.name)} title="Click para previsualizar">{archivo.name}</div>
+                  <div className="file-meta">
+                    {formatFileSize(archivo.size)}
+                    {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
+                    
+                    {fileProject && (
+                      <div style={{ marginTop: '4px', display: 'flex', gap: '8px' }}>
+                        <span className="project-meta-tag" style={{ fontSize: '10px', padding: '2px 8px' }}>
+                          <Briefcase size={10} /> {fileProject.nombre}
+                        </span>
+                        <span className="project-meta-tag" style={{ fontSize: '10px', padding: '2px 8px' }}>
+                          <Layers size={10} /> {getNombreCategoria(fileProject.categoriaId)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="file-actions">
+                  {vistaActual === 'papelera' ? (
+                    <>
+                      <button className="file-download" onClick={() => handleRestore(archivo)} style={{ color: '#34d399', border: '1px solid #34d399', background: 'rgba(52, 211, 153, 0.1)' }}>
+                        <RefreshCcw size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Restaurar
+                      </button>
+                      {userRole !== 'lector' && (
+                        <button className="file-delete" onClick={() => handleHardDelete(archivo)} title="Eliminar definitivamente">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button className="file-download" onClick={() => handleDownload(archivo.name)}>
+                        <Download size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                        Descargar
+                      </button>
+                      {userRole !== 'lector' && (
+                        <button className="file-delete" onClick={() => handleDelete(archivo)} title="Mover a papelera">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      )})}
-    </div>
-  );
+      </div>
+    );
+  };
 
   // ===== COMPLETAR PERFIL =====
   const handleCompleteProfile = async (e: React.FormEvent) => {
