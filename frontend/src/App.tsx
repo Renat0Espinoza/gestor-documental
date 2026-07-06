@@ -7,7 +7,7 @@ import {
   Filter, Users, History, Shield, Eye, Phone, Loader2,
   Briefcase, Layers, MapPin, Plus, ChevronDown, ChevronRight,
   UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle, Info,
-  ClipboardList, MessageSquare, Send, Clock, Circle
+  ClipboardList, MessageSquare, Send, Clock, Circle, X
 } from 'lucide-react';
 import Login from './pages/Login';
 import { auth, db } from './services/firebase';
@@ -215,6 +215,12 @@ function App() {
   const [newCommentText, setNewCommentText] = useState('');
   const [reqFilterStatus, setReqFilterStatus] = useState('all');
 
+  // --- Previsualización de PDF ---
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+
+  // --- Subida múltiple ---
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; uploading: boolean }>({ current: 0, total: 0, uploading: false });
+
   // --- UI Global ---
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const showToast = (type: ToastMsg['type'], message: string) => {
@@ -377,65 +383,106 @@ function App() {
 
   // ===== SUBIDA DE ARCHIVOS =====
   const MAX_FILE_SIZE = 10 * 1024 * 1024;
+  const MAX_TOTAL_SIZE = 50 * 1024 * 1024;
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) return;
 
-    if (file.type !== 'application/pdf') {
-      showToast('warning', '⚠️ Por favor, selecciona únicamente archivos PDF.');
-      return;
+    const files = Array.from(fileList);
+
+    // Validar que todos sean PDF
+    const nonPdfFiles = files.filter(f => f.type !== 'application/pdf');
+    if (nonPdfFiles.length > 0) {
+      showToast('warning', `⚠️ ${nonPdfFiles.length} archivo(s) no son PDF y fueron ignorados.\nSolo se permiten archivos PDF.`);
     }
-
-    if (file.size > MAX_FILE_SIZE) {
-      showToast('warning', '⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
+    const pdfFiles = files.filter(f => f.type === 'application/pdf');
+    if (pdfFiles.length === 0) {
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
-    const formData = new FormData();
-    formData.append('documento', file);
+    // Validar tamaño individual
+    const oversizedFiles = pdfFiles.filter(f => f.size > MAX_FILE_SIZE);
+    if (oversizedFiles.length > 0) {
+      showToast('warning', `⚠️ ${oversizedFiles.length} archivo(s) superan el límite de 10 MB individual y fueron excluidos.`);
+    }
+    const validFiles = pdfFiles.filter(f => f.size <= MAX_FILE_SIZE);
+    if (validFiles.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
-    try {
-      const response = await axios.post(`${API_BASE}/api/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      const fileName = response.data.file;
+    // Validar tamaño total
+    const totalSize = validFiles.reduce((sum, f) => sum + f.size, 0);
+    if (totalSize > MAX_TOTAL_SIZE) {
+      showToast('warning', `⚠️ El tamaño total de los archivos (${formatFileSize(totalSize)}) supera el límite de 50 MB.\nReduce la cantidad de archivos e inténtalo de nuevo.`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
-      // Guardar metadatos en Firestore si se seleccionó un proyecto
-      if (uploadProyectoId) {
-        await addDoc(collection(db, 'documentos'), {
-          filename: fileName,
-          originalName: file.name,
-          size: file.size,
-          proyectoId: uploadProyectoId,
-          subidoPor: auth.currentUser?.uid || '',
-          fechaCreacion: serverTimestamp()
+    // Subir archivos uno a uno con progreso
+    setUploadProgress({ current: 0, total: validFiles.length, uploading: true });
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < validFiles.length; i++) {
+      const file = validFiles[i];
+      setUploadProgress({ current: i + 1, total: validFiles.length, uploading: true });
+
+      const formData = new FormData();
+      formData.append('documento', file);
+
+      try {
+        const response = await axios.post(`${API_BASE}/api/upload`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
         });
-      }
 
-      showToast('success', `✅ ¡Subida exitosa!\nArchivo: ${fileName}`);
-      registrarAuditoria('Subió el archivo', fileName || file.name);
+        const fileName = response.data.file;
 
-      // Si estábamos en el explorador, recargarlo
-      if (vistaActual === 'explorador') {
-        abrirExplorador();
+        // Guardar metadatos en Firestore si se seleccionó un proyecto
+        if (uploadProyectoId) {
+          await addDoc(collection(db, 'documentos'), {
+            filename: fileName,
+            originalName: file.name,
+            size: file.size,
+            proyectoId: uploadProyectoId,
+            subidoPor: auth.currentUser?.uid || '',
+            fechaCreacion: serverTimestamp()
+          });
+        }
+
+        registrarAuditoria('Subió el archivo', fileName || file.name);
+        successCount++;
+      } catch (err: unknown) {
+        errorCount++;
+        if (axios.isAxiosError(err) && err.response?.status === 413) {
+          showToast('warning', `⚠️ "${file.name}" es demasiado pesado para el servidor.`);
+        } else {
+          showToast('error', `❌ Error al subir "${file.name}".`);
+        }
       }
-      // Si estábamos en un proyecto, recargar el explorador interno actualizando la lista de archivos global
-      if (vistaActual === 'proyecto-detalle') {
-        abrirExploradorContexto();
-      }
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response?.status === 413) {
-        showToast('warning', '⚠️ El archivo es demasiado pesado.\nEl límite máximo permitido es de 10 MB.');
-      } else {
-        showToast('error', '❌ Hubo un error al intentar subir el archivo al servidor.');
-      }
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      setUploadProyectoId(null);
     }
+
+    setUploadProgress({ current: 0, total: 0, uploading: false });
+
+    // Resumen final
+    if (successCount > 0) {
+      showToast('success', `✅ ${successCount} archivo(s) subido(s) exitosamente.${errorCount > 0 ? `\n⚠️ ${errorCount} archivo(s) fallaron.` : ''}`);
+    } else if (errorCount > 0) {
+      showToast('error', `❌ No se pudo subir ningún archivo. ${errorCount} error(es).`);
+    }
+
+    // Recargar vistas
+    if (vistaActual === 'explorador') {
+      abrirExplorador();
+    }
+    if (vistaActual === 'proyecto-detalle') {
+      abrirExploradorContexto();
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setUploadProyectoId(null);
   };
 
   // ===== CARGAR METADATOS Y ARCHIVOS =====
@@ -1392,11 +1439,11 @@ function App() {
         
         return (
         <div key={index} className="file-item" style={{ animationDelay: `${index * 0.05}s` }}>
-          <div className="file-icon">
+          <div className="file-icon" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(archivo.name)}>
             <FileText size={20} color="#f87171" />
           </div>
           <div className="file-info">
-            <div className="file-name">{archivo.name}</div>
+            <div className="file-name" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(archivo.name)} title="Click para previsualizar">{archivo.name}</div>
             <div className="file-meta">
               {formatFileSize(archivo.size)}
               {archivo.modified ? ` · ${formatDate(archivo.modified)}` : ''}
@@ -1609,7 +1656,7 @@ function App() {
 
       <main className="app-main">
         {/* HIDDEN FILE INPUT */}
-        <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+        <input type="file" accept="application/pdf" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
 
         {/* === DASHBOARD === */}
         {vistaActual === 'dashboard' && (
@@ -3239,6 +3286,53 @@ function App() {
           </div>
         ))}
       </div>
+
+      {/* === MODAL PREVISUALIZACIÓN PDF === */}
+      {previewFile && (
+        <div className="pdf-preview-overlay" onClick={() => setPreviewFile(null)}>
+          <div className="pdf-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pdf-preview-header">
+              <div className="pdf-preview-title">
+                <FileText size={18} color="#f87171" />
+                <span>{previewFile}</span>
+              </div>
+              <div className="pdf-preview-actions">
+                <button className="pdf-preview-btn-download" onClick={() => handleDownload(previewFile)}>
+                  <Download size={16} /> Descargar
+                </button>
+                <button className="pdf-preview-btn-close" onClick={() => setPreviewFile(null)}>
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="pdf-preview-body">
+              <iframe
+                src={`${API_BASE}/api/files/${encodeURIComponent(previewFile)}`}
+                title={`Previsualización: ${previewFile}`}
+                className="pdf-preview-iframe"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === OVERLAY PROGRESO DE SUBIDA === */}
+      {uploadProgress.uploading && (
+        <div className="upload-progress-overlay">
+          <div className="upload-progress-box">
+            <Loader2 className="spin-icon" size={32} color="#4f8cff" />
+            <h3>Subiendo archivos…</h3>
+            <p>Subiendo {uploadProgress.current} de {uploadProgress.total}...</p>
+            <div className="upload-progress-bar-track">
+              <div
+                className="upload-progress-bar-fill"
+                style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+              />
+            </div>
+            <span className="upload-progress-pct">{Math.round((uploadProgress.current / uploadProgress.total) * 100)}%</span>
+          </div>
+        </div>
+      )}
 
       {confirmState.isOpen && (
         <div className="confirm-overlay" style={{ zIndex: 99999 }}>
