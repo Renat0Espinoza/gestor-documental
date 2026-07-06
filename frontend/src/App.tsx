@@ -125,6 +125,11 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
+function isPreviewable(filename: string): boolean {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  return ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'txt'].includes(ext || '');
+}
+
 // ===== TIPOS DE VISTA =====
 type Vista = 'dashboard' | 'explorador' | 'busqueda' | 'configuracion' | 'usuarios' | 'historial' | 'proyectos' | 'proyecto-detalle' | 'categorias' | 'papelera' | 'requerimientos' | 'requerimiento-detalle';
 
@@ -402,23 +407,12 @@ function App() {
 
     const files = Array.from(fileList);
 
-    // Validar que todos sean PDF
-    const nonPdfFiles = files.filter(f => f.type !== 'application/pdf');
-    if (nonPdfFiles.length > 0) {
-      showToast('warning', `⚠️ ${nonPdfFiles.length} archivo(s) no son PDF y fueron ignorados.\nSolo se permiten archivos PDF.`);
-    }
-    const pdfFiles = files.filter(f => f.type === 'application/pdf');
-    if (pdfFiles.length === 0) {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
     // Validar tamaño individual
-    const oversizedFiles = pdfFiles.filter(f => f.size > MAX_FILE_SIZE);
+    const oversizedFiles = files.filter(f => f.size > MAX_FILE_SIZE);
     if (oversizedFiles.length > 0) {
       showToast('warning', `⚠️ ${oversizedFiles.length} archivo(s) superan el límite de 10 MB individual y fueron excluidos.`);
     }
-    const validFiles = pdfFiles.filter(f => f.size <= MAX_FILE_SIZE);
+    const validFiles = files.filter(f => f.size <= MAX_FILE_SIZE);
     if (validFiles.length === 0) {
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
@@ -2053,7 +2047,7 @@ function App() {
         {showSidebar && renderSidebar()}
         <main className="app-main">
           {/* HIDDEN FILE INPUT */}
-          <input type="file" accept="application/pdf" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+          <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
 
         {/* === DASHBOARD === */}
         {vistaActual === 'dashboard' && (
@@ -3704,11 +3698,21 @@ function App() {
               </div>
             </div>
             <div className="pdf-preview-body">
-              <iframe
-                src={`${API_BASE}/api/files/${encodeURIComponent(previewFile)}?preview=true`}
-                title={`Previsualización: ${previewFile}`}
-                className="pdf-preview-iframe"
-              />
+              {isPreviewable(previewFile) ? (
+                <iframe
+                  src={`${API_BASE}/api/files/${encodeURIComponent(previewFile)}?preview=true`}
+                  title={`Previsualización: ${previewFile}`}
+                  className="pdf-preview-iframe"
+                />
+              ) : (
+                <div className="preview-fallback-container">
+                  <AlertTriangle size={48} color="var(--accent-amber)" />
+                  <p>La previsualización en línea no está disponible para este tipo de archivo.</p>
+                  <button className="btn-primary" onClick={() => handleDownload(previewFile)}>
+                    Descargar Archivo
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
