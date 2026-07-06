@@ -400,12 +400,20 @@ function App() {
   // ===== SUBIDA DE ARCHIVOS =====
   const MAX_FILE_SIZE = 10 * 1024 * 1024;
   const MAX_TOTAL_SIZE = 50 * 1024 * 1024;
+  const MAX_FILES_COUNT = 20;
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
     if (!fileList || fileList.length === 0) return;
 
     const files = Array.from(fileList);
+
+    // Validar cantidad máxima de archivos
+    if (files.length > MAX_FILES_COUNT) {
+      showToast('warning', `⚠️ No puedes subir más de ${MAX_FILES_COUNT} archivos simultáneamente. Seleccionaste ${files.length}.`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
     // Validar tamaño individual
     const oversizedFiles = files.filter(f => f.size > MAX_FILE_SIZE);
