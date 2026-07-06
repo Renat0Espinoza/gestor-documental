@@ -9,8 +9,8 @@ import {
   UserPlus, UserX, Tag, ToggleLeft, ToggleRight, AlertTriangle, Info,
   ClipboardList, MessageSquare, Send, Clock, Circle
 } from 'lucide-react';
-import Login from './Login';
-import { auth, db } from './firebase';
+import Login from './pages/Login';
+import { auth, db } from './services/firebase';
 import { updateProfile, updateEmail, updatePassword, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
 import { doc, getDoc, collection, getDocs, updateDoc, addDoc, deleteDoc, serverTimestamp, query, orderBy, where, writeBatch, onSnapshot, setDoc } from 'firebase/firestore';
 

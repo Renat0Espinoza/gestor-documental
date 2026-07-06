@@ -6,7 +6,7 @@ import {
   sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore'; // Inyectado para roles
-import { auth, db } from './firebase'; // Inyectado 'db'
+import { auth, db } from '../services/firebase'; // Inyectado 'db'
 
 interface LoginProps {
   onLoginSuccess: () => void;
