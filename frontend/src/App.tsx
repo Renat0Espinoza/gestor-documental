@@ -1146,16 +1146,19 @@ function App() {
       () => {
         showConfirm(
           'Confirmación Definitiva',
-          '⚠️ Se eliminarán también todas las áreas y asignaciones de este proyecto.\n¿Confirmas la eliminación?',
+          '⚠️ Se eliminarán también todas las áreas, asignaciones y requerimientos de este proyecto.\n¿Confirmas la eliminación?',
           async () => {
             try {
-              // Eliminar áreas del proyecto primero
+              // Eliminar requerimientos del proyecto
+              await axios.delete(`${API_BASE}/api/requirements/by-project/${proyecto.id}`);
+              // Eliminar áreas del proyecto
               const areasSnap = await getDocs(collection(db, 'proyectos', proyecto.id, 'areas'));
               for (const aDoc of areasSnap.docs) {
                 await deleteDoc(doc(db, 'proyectos', proyecto.id, 'areas', aDoc.id));
               }
               await deleteDoc(doc(db, 'proyectos', proyecto.id));
               cargarProyectos();
+              cargarRequerimientos();
               registrarAuditoria('Eliminó proyecto', proyecto.nombre);
               showToast('success', '🗑️ Proyecto eliminado correctamente.');
             } catch {

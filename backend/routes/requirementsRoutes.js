@@ -6,6 +6,7 @@ import {
     updateRequirementPriority,
     updateRequirementLectores,
     deleteRequirement,
+    deleteRequirementsByProject,
     addComment
 } from '../controllers/requirementsController.js';
 
@@ -25,6 +26,9 @@ router.patch('/:id/priority', updateRequirementPriority);
 
 // Actualizar lectores de un requerimiento
 router.patch('/:id/lectores', updateRequirementLectores);
+
+// Eliminar todos los requerimientos de un proyecto
+router.delete('/by-project/:proyectoId', deleteRequirementsByProject);
 
 // Eliminar un requerimiento
 router.delete('/:id', deleteRequirement);

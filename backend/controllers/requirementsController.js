@@ -169,6 +169,22 @@ const addComment = (req, res) => {
     }
 };
 
+// Eliminar todos los requerimientos de un proyecto
+const deleteRequirementsByProject = (req, res) => {
+    try {
+        const { proyectoId } = req.params;
+        const reqs = loadRequirements();
+        const filtered = reqs.filter(r => r.proyectoId !== proyectoId);
+        const deletedCount = reqs.length - filtered.length;
+        saveRequirements(filtered);
+        console.log(`🗑️ ${deletedCount} requerimiento(s) eliminados del proyecto: ${proyectoId}`);
+        res.json({ success: true, deletedCount });
+    } catch (err) {
+        console.error('Error al eliminar requerimientos del proyecto:', err);
+        res.status(500).json({ error: 'Error al eliminar los requerimientos del proyecto' });
+    }
+};
+
 export {
     listRequirements,
     createRequirement,
@@ -176,5 +192,6 @@ export {
     updateRequirementPriority,
     updateRequirementLectores,
     deleteRequirement,
+    deleteRequirementsByProject,
     addComment
 };
